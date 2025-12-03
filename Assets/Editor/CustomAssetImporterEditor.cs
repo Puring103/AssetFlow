@@ -1,237 +1,201 @@
+using System.IO;
 using UnityEditor;
 using UnityEditor.AssetImporters;
 using UnityEngine;
 
 /// <summary>
-/// TextureImporter 的自定义编辑器
+/// 资源导入器的统一管理编辑器
+/// 使用 InitializeOnLoad 在所有资源 Inspector 头部添加模板管理功能
 /// </summary>
-[CustomEditor(typeof(AssetImporter))]
-[CanEditMultipleObjects]
-public class AssetImporterEditor : Editor
+[InitializeOnLoad]
+public class CustomAssetImporterEditor
 {
-    private Editor defaultEditor;
-    private TextureImporter targetImporter;
-    private ScriptableObject managingTemplate;
-    
-    private bool showCustomImporter=false;
-    
-    private void OnEnable()
+    static CustomAssetImporterEditor()
     {
-        targetImporter = target as TextureImporter;
-        if (targetImporter != null)
-        {
-            string assetPath = targetImporter.assetPath;
-            managingTemplate = ImporterTemplateUtility.GetTemplateForAsset(assetPath);
-            
-            // 如果没有被模板托管，创建默认编辑器
-            if (managingTemplate == null)
-            {
-                showCustomImporter = true;
-            }
-        }
+        Editor.finishedDefaultHeaderGUI += OnPostHeaderGUI;
     }
-    
-    private void OnDisable()
+
+    private static void OnPostHeaderGUI(Editor editor)
     {
-        if (defaultEditor != null)
+        // 检查是否是单个资源对象
+        if (editor.targets.Length != 1 || editor.target == null)
+            return;
+
+        // 获取资源路径
+        var assetPath = AssetDatabase.GetAssetPath(editor.target);
+        if (string.IsNullOrEmpty(assetPath))
+            return;
+
+        // 获取资源的 AssetImporter
+        var importer = AssetImporter.GetAtPath(assetPath);
+        if (!ImporterTemplateUtility.IsSupportedImporter(importer))
+            return;
+
+        // 检查是否已有模板管理
+        var existingTemplate = ImporterTemplateUtility.GetTemplateForAsset(assetPath);
+        
+        if (existingTemplate != null)
         {
-            DestroyImmediate(defaultEditor);
-        }
-    }
-    
-    public override void OnInspectorGUI()
-    {
-        if (managingTemplate != null)
-        {
-            // 资源被模板托管，显示托管信息
-            DrawManagedByTemplateUI();
+            DrawManagedByTemplateUI(existingTemplate);
         }
         else
         {
-            // 显示原始的导入器界面
-            if (defaultEditor != null)
-            {
-                defaultEditor.OnInspectorGUI();
-            }
-            
-            // 添加创建模板按钮
-            GUILayout.Space(10);
-            DrawCreateTemplateButton();
+            DrawCreateTemplateButton(assetPath, importer);
         }
+        
+        GUILayout.Space(5);
     }
-    
-    private void DrawManagedByTemplateUI()
+    /// <summary>
+    /// 绘制"由 Template 托管"的 UI（用于头部显示）
+    /// </summary>
+    private static void DrawManagedByTemplateUI(ScriptableObject template)
     {
-        // 使用醒目的颜色背景
         var originalColor = GUI.backgroundColor;
         GUI.backgroundColor = new Color(0.3f, 0.7f, 1f, 0.3f);
         
         GUILayout.BeginVertical(EditorStyles.helpBox);
         GUI.backgroundColor = originalColor;
         
-        GUILayout.Space(10);
+        // 标题
+        GUILayout.BeginHorizontal();
+        GUILayout.FlexibleSpace();
         
-        // 大标题
-        var titleStyle = new GUIStyle(EditorStyles.boldLabel);
-        titleStyle.fontSize = 14;
+        var titleStyle = new GUIStyle(EditorStyles.boldLabel)
+        {
+            fontSize = 12,
+            alignment = TextAnchor.MiddleCenter
+        };
         titleStyle.normal.textColor = new Color(0.2f, 0.5f, 1f);
-        titleStyle.alignment = TextAnchor.MiddleCenter;
         
         GUILayout.Label("⚙ 此资源由导入器模板托管", titleStyle);
         
-        GUILayout.Space(10);
+        GUILayout.FlexibleSpace();
+        GUILayout.EndHorizontal();
         
-        // 分隔线
-        DrawSeparator();
+        GUILayout.Space(5);
         
-        GUILayout.Space(10);
-        
-        // 显示 Template 对象字段
+        // 显示模板对象字段
         EditorGUILayout.BeginHorizontal();
-        GUILayout.Label("管理模板:", EditorStyles.boldLabel, GUILayout.Width(70));
+        EditorGUILayout.LabelField("管理模板:", GUILayout.Width(70));
         
         EditorGUI.BeginDisabledGroup(true);
-        EditorGUILayout.ObjectField(managingTemplate, typeof(ScriptableObject), false);
+        EditorGUILayout.ObjectField(template, typeof(ScriptableObject), false);
         EditorGUI.EndDisabledGroup();
         
         EditorGUILayout.EndHorizontal();
         
-        GUILayout.Space(10);
+        GUILayout.Space(5);
         
-        // 提示信息框
-        EditorGUILayout.HelpBox(
-            "该资源的导入设置由上述模板统一管理。\n\n" +
-            "• 所有导入设置修改请在模板中进行\n" +
-            "• 直接修改此资源的设置可能会被模板覆盖\n" +
-            "• 点击下方按钮可快速跳转到模板进行编辑",
-            MessageType.Info
-        );
-        
-        GUILayout.Space(10);
-        
-        // 按钮行
+        // 操作按钮
         GUILayout.BeginHorizontal();
         
-        // 编辑模板按钮
-        var buttonStyle = new GUIStyle(GUI.skin.button);
-        buttonStyle.fontSize = 12;
-        buttonStyle.fontStyle = FontStyle.Bold;
-        
-        if (GUILayout.Button("✏ 编辑模板", buttonStyle, GUILayout.Height(30)))
+        if (GUILayout.Button("编辑模板", GUILayout.Height(25)))
         {
-            Selection.activeObject = managingTemplate;
-            EditorGUIUtility.PingObject(managingTemplate);
+            Selection.activeObject = template;
+            EditorGUIUtility.PingObject(template);
         }
         
-        // 查看所有托管资源按钮
-        if (GUILayout.Button("📋 查看所有托管资源", buttonStyle, GUILayout.Height(30)))
+        if (GUILayout.Button("查看所有托管资源", GUILayout.Height(25)))
         {
-            Selection.activeObject = managingTemplate;
+            Selection.activeObject = template;
         }
         
         GUILayout.EndHorizontal();
         
-        GUILayout.Space(10);
+        GUILayout.Space(3);
+        
+        // 提示信息
+        var hintStyle = new GUIStyle(EditorStyles.miniLabel)
+        {
+            wordWrap = true,
+            alignment = TextAnchor.MiddleCenter
+        };
+        hintStyle.normal.textColor = new Color(0.5f, 0.5f, 0.5f);
+        
+        GUILayout.Label("该资源的导入设置由上述模板统一管理，直接修改导入设置可能会被模板覆盖。", hintStyle);
         
         GUILayout.EndVertical();
-        
-        GUILayout.Space(20);
-        
-        // 显示资源预览（如果有）
-        if (targetImporter != null)
-        {
-            var asset = AssetDatabase.LoadAssetAtPath<Texture2D>(targetImporter.assetPath);
-            if (asset != null)
-            {
-                GUILayout.Label("资源预览:", EditorStyles.boldLabel);
-                var rect = GUILayoutUtility.GetRect(200, 200, GUILayout.ExpandWidth(true));
-                EditorGUI.DrawPreviewTexture(rect, asset, null, ScaleMode.ScaleToFit);
-            }
-        }
     }
     
-    private void DrawCreateTemplateButton()
+    /// <summary>
+    /// 绘制创建模板按钮
+    /// </summary>
+    private static void DrawCreateTemplateButton(string assetPath, AssetImporter importer)
     {
         GUILayout.BeginHorizontal();
         GUILayout.FlexibleSpace();
         
-        if (GUILayout.Button("创建导入器模板", GUILayout.Width(150), GUILayout.Height(25)))
+        if (GUILayout.Button("创建导入器模板", GUILayout.Width(150)))
         {
-            CreateTemplateForCurrentAsset();
+            CreateImporterTemplate(assetPath, importer);
         }
         
         GUILayout.FlexibleSpace();
         GUILayout.EndHorizontal();
     }
-    
-    private void CreateTemplateForCurrentAsset()
+
+    /// <summary>
+    /// 根据导入器类型创建对应的模板
+    /// </summary>
+    private static void CreateImporterTemplate(string assetPath, AssetImporter importer)
     {
-        if (targetImporter == null)
-            return;
-        
-        string assetPath = targetImporter.assetPath;
-        ImporterTemplateCreator.CreateImporterTemplate<TextureImporterTemplate, TextureImporter>(assetPath, targetImporter);
-        
-        // 刷新编辑器
-        managingTemplate = ImporterTemplateUtility.GetTemplateForAsset(assetPath);
-        if (managingTemplate != null && defaultEditor != null)
+        if (importer is TextureImporter textureImporter)
         {
-            DestroyImmediate(defaultEditor);
-            defaultEditor = null;
+            CreateImporterTemplate<TextureImporterTemplate, TextureImporter>(assetPath, textureImporter);
+        }
+        else if (importer is ModelImporter modelImporter)
+        {
+            CreateImporterTemplate<ModelImporterTemplate, ModelImporter>(assetPath, modelImporter);
+        }
+        else if (importer is AudioImporter audioImporter)
+        {
+            CreateImporterTemplate<AudioImporterTemplate, AudioImporter>(assetPath, audioImporter);
         }
     }
-    
-    private void DrawSeparator()
-    {
-        var rect = GUILayoutUtility.GetRect(1, 1, GUILayout.ExpandWidth(true));
-        EditorGUI.DrawRect(rect, new Color(0.5f, 0.5f, 0.5f, 0.5f));
-    }
-}
 
-
-/// <summary>
-/// 用于创建 ImporterTemplate 的辅助类
-/// </summary>
-public static class ImporterTemplateCreator
-{
-    public static void CreateImporterTemplate<TTemplate, TImporter>(string assetPath, TImporter importer)
+    /// <summary>
+    /// 泛型方法：创建导入器模板
+    /// </summary>
+    private static void CreateImporterTemplate<TTemplate, TImporter>(string assetPath, TImporter importer)
         where TTemplate : ImporterTemplate<TImporter>
         where TImporter : AssetImporter
     {
-        // 获取当前资源所在的文件夹
-        string folderPath = System.IO.Path.GetDirectoryName(assetPath);
+        // 获取资源所在文件夹
+        var folderPath = Path.GetDirectoryName(assetPath);
         
-        // 生成新文件的路径
-        string templateTypeName = typeof(TTemplate).Name;
-        string templateFileName = $"{templateTypeName}.asset";
-        string templatePath = System.IO.Path.Combine(folderPath, templateFileName);
-        templatePath = AssetDatabase.GenerateUniqueAssetPath(templatePath);
+        // 生成模板文件路径
+        var templateTypeName = typeof(TTemplate).Name;
+        var templateFileName = $"{templateTypeName}.asset";
+        if (folderPath != null)
+        {
+            var templatePath = Path.Combine(folderPath, templateFileName);
+            templatePath = AssetDatabase.GenerateUniqueAssetPath(templatePath);
         
-        // 创建模板实例
-        TTemplate templateAsset = ScriptableObject.CreateInstance<TTemplate>();
+            // 创建模板实例
+            var templateAsset = ScriptableObject.CreateInstance<TTemplate>();
+
+            // 复制导入器设置
+            var newImporter = Object.Instantiate(importer);
+            newImporter.name = typeof(TImporter).Name;
         
-        // 复制 Importer 设置
-        TImporter newImporter = Object.Instantiate(importer);
-        newImporter.name = $"{typeof(TImporter).Name}";
+            // 创建主资源
+            AssetDatabase.CreateAsset(templateAsset, templatePath);
         
-        // 创建主资源文件
-        AssetDatabase.CreateAsset(templateAsset, templatePath);
+            // 将导入器作为子资源添加
+            AssetDatabase.AddObjectToAsset(newImporter, templateAsset);
         
-        // 将复制的 importer 作为子资源添加到 template 中
-        AssetDatabase.AddObjectToAsset(newImporter, templateAsset);
+            // 设置导入器引用
+            templateAsset.Importer = newImporter;
+            EditorUtility.SetDirty(templateAsset);
         
-        // 将复制的设置赋值给 template
-        templateAsset.Importer = newImporter;
-        EditorUtility.SetDirty(templateAsset);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
         
-        AssetDatabase.SaveAssets();
-        AssetDatabase.Refresh();
+            // 选中新创建的模板
+            Selection.activeObject = templateAsset;
+            EditorGUIUtility.PingObject(templateAsset);
         
-        // 选中新创建的资源
-        Selection.activeObject = templateAsset;
-        EditorGUIUtility.PingObject(templateAsset);
-        
-        Debug.Log($"已创建 {templateTypeName}: {templatePath}");
+            Debug.Log($"已创建 {templateTypeName}: {templatePath}");
+        }
     }
 }
-

@@ -1,6 +1,29 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
---- !u!1006 &-6338813772260617911
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9d61c3846dbf4239a35013c9d23a8875, type: 3}
+  m_Name: TextureImporterTemplate
+  m_EditorClassIdentifier: 
+  serializationData:
+    SerializedFormat: 2
+    SerializedBytes: 
+    ReferencedUnityObjects: []
+    SerializedBytesString: 
+    Prefab: {fileID: 0}
+    PrefabModificationsReferencedUnityObjects: []
+    PrefabModifications: []
+    SerializationNodes: []
+  includeSubfolders: 0
+  importer: {fileID: 53760687451971358}
+--- !u!1006 &53760687451971358
 TextureImporter:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -10,6 +33,7 @@ TextureImporter:
   m_InternalIDToNameTable: []
   m_ExternalObjects: {}
   m_UsedFileIDs:
+  - 21300000
   - 2800000
   serializedVersion: 13
   mipmaps:
@@ -48,10 +72,10 @@ TextureImporter:
     m_WrapU: 0
     m_WrapV: 0
     m_WrapW: 0
-  m_NPOTScale: 1
+  m_NPOTScale: 0
   m_Lightmap: 0
   m_CompressionQuality: 50
-  m_SpriteMode: 0
+  m_SpriteMode: 1
   m_SpriteExtrude: 1
   m_SpriteMeshType: 1
   m_Alignment: 0
@@ -80,7 +104,7 @@ TextureImporter:
     m_MaxTextureSize: 2048
     m_ResizeAlgorithm: 0
     m_TextureFormat: -1
-    m_TextureCompression: 1
+    m_TextureCompression: 0
     m_CompressionQuality: 50
     m_CrunchedCompression: 0
     m_AllowsAlphaSplitting: 0
@@ -107,7 +131,7 @@ TextureImporter:
     m_Outline: []
     m_PhysicsShape: []
     m_Bones: []
-    m_SpriteID: 
+    m_SpriteID: 5e97eb03825dee720800000000000000
     m_InternalID: 0
     m_Vertices: []
     m_Indices: 
@@ -118,14 +142,14 @@ TextureImporter:
   m_MipmapLimitGroupName: 
   m_Output:
     textureImportInstructions:
-      compressedFormat: 12
+      compressedFormat: 4
       uncompressedFormat: 4
-      desiredFormat: 12
-      usageMode: 0
+      desiredFormat: 4
+      usageMode: 6
       colorSpace: 1
       androidETC2FallbackFormat: 4
-      width: 128
-      height: 256
+      width: 125
+      height: 230
       depth: 0
       cubeIntermediateSize: 0
       cubeMode: 6
@@ -143,26 +167,3 @@ TextureImporter:
   m_UserData: 
   m_AssetBundleName: 
   m_AssetBundleVariant: 
---- !u!114 &11400000
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 9d61c3846dbf4239a35013c9d23a8875, type: 3}
-  m_Name: TextureImporterTemplate
-  m_EditorClassIdentifier: 
-  serializationData:
-    SerializedFormat: 2
-    SerializedBytes: 
-    ReferencedUnityObjects: []
-    SerializedBytesString: 
-    Prefab: {fileID: 0}
-    PrefabModificationsReferencedUnityObjects: []
-    PrefabModifications: []
-    SerializationNodes: []
-  includeSubfolders: 0
-  importer: {fileID: -6338813772260617911}

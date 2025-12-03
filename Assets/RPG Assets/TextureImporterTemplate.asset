@@ -1,39 +1,15 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
---- !u!114 &11400000
-MonoBehaviour:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 0}
-  m_Enabled: 1
-  m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 9d61c3846dbf4239a35013c9d23a8875, type: 3}
-  m_Name: TextureImporterTemplate
-  m_EditorClassIdentifier: 
-  serializationData:
-    SerializedFormat: 2
-    SerializedBytes: 
-    ReferencedUnityObjects: []
-    SerializedBytesString: 
-    Prefab: {fileID: 0}
-    PrefabModificationsReferencedUnityObjects: []
-    PrefabModifications: []
-    SerializationNodes: []
-  includeSubfolders: 0
-  importer: {fileID: 3942941180362290315}
---- !u!1006 &3942941180362290315
+--- !u!1006 &-3819075278154505604
 TextureImporter:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
-  m_Name: TextureImporter_Copy
+  m_Name: TextureImporter
   m_InternalIDToNameTable: []
   m_ExternalObjects: {}
   m_UsedFileIDs:
-  - 21300000
   - 2800000
   serializedVersion: 13
   mipmaps:
@@ -145,7 +121,7 @@ TextureImporter:
       compressedFormat: 4
       uncompressedFormat: 4
       desiredFormat: 4
-      usageMode: 6
+      usageMode: 0
       colorSpace: 1
       androidETC2FallbackFormat: 4
       width: 125
@@ -167,3 +143,26 @@ TextureImporter:
   m_UserData: 
   m_AssetBundleName: 
   m_AssetBundleVariant: 
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9d61c3846dbf4239a35013c9d23a8875, type: 3}
+  m_Name: TextureImporterTemplate
+  m_EditorClassIdentifier: 
+  serializationData:
+    SerializedFormat: 2
+    SerializedBytes: 
+    ReferencedUnityObjects: []
+    SerializedBytesString: 
+    Prefab: {fileID: 0}
+    PrefabModificationsReferencedUnityObjects: []
+    PrefabModifications: []
+    SerializationNodes: []
+  includeSubfolders: 0
+  importer: {fileID: -3819075278154505604}
