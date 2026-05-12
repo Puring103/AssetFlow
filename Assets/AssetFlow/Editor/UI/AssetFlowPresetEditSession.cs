@@ -38,7 +38,7 @@ namespace AssetFlow.Editor.UI
             }
 
             preset.ApplyTo(importer);
-            var editor = UnityEditor.Editor.CreateEditor(importer);
+            var editor = UnityEditor.Editor.CreateEditor(importer, AssetFlowImporterEditorTypes.DefaultEditorTypeFor(importer));
             if (editor == null)
             {
                 AssetFlowPresetUtility.DeleteTemporarySourceAssetForPresetEditing(path);
@@ -48,15 +48,22 @@ namespace AssetFlow.Editor.UI
             return new AssetFlowPresetEditSession(preset, path, importer, editor);
         }
 
-        public void OnInspectorGUI()
+        public bool OnInspectorGUI()
         {
+            if (importer == null || importerEditor == null)
+            {
+                EditorGUILayout.HelpBox("Preset editor is rebuilding. Close and reopen this handler if the preview does not return.", MessageType.Info);
+                return false;
+            }
+
             EditorGUI.BeginChangeCheck();
             importerEditor.OnInspectorGUI();
             if (!EditorGUI.EndChangeCheck())
-                return;
+                return false;
 
             preset.UpdateProperties(importer);
             EditorUtility.SetDirty(preset);
+            return true;
         }
 
         public void Dispose()

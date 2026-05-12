@@ -207,15 +207,20 @@ namespace AssetFlow.Editor.UI
                 using (var scrollView = new EditorGUILayout.ScrollViewScope(inspectorScroll))
                 {
                     inspectorScroll = scrollView.scrollPosition;
-                    configPanelDrawer.Draw(
+                    var currentSnapshot = selectedConfig.ToSnapshot();
+                    var currentOutOfDate = CountOutOfDate(selectedView.ManagedAssetPaths, currentSnapshot, new AssetFlowIndexStore().Load());
+                    var changed = configPanelDrawer.Draw(
                         selectedConfig,
                         selectedSerializedObject,
-                        RootLabel(selectedView.Snapshot),
-                        selectedView.Snapshot.ConfigPath,
+                        RootLabel(currentSnapshot),
+                        currentSnapshot.ConfigPath,
                         selectedView.ManagedAssetPaths.Count,
-                        selectedView.OutOfDateCount,
+                        currentOutOfDate,
                         selectedView.ValidationCount,
+                        currentOutOfDate > 0,
                         ApplySelectedConfig);
+                    if (changed)
+                        Repaint();
                 }
             }
         }
@@ -304,7 +309,7 @@ namespace AssetFlow.Editor.UI
         {
             var asset = node.Kind == AssetFlowManagerTreeItemKind.Config
                 ? selectedConfig
-                : AssetDatabase.LoadMainAssetAtPath(node.Path);
+                : selectedConfig;
             if (asset == null)
                 return;
 

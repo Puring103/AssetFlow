@@ -47,8 +47,8 @@ namespace AssetFlow.Editor.UI
                 var outOfDate = index.IsOutOfDate(assetGuid, result.Config.ConfigGuid, result.Config.RuleHash);
 
                 EditorGUILayout.LabelField(outOfDate ? "AssetFlow Managed (Out of date)" : "AssetFlow Managed", EditorStyles.boldLabel);
+                EditorGUILayout.HelpBox("This asset's importer is managed by AssetFlow. Edit importer settings in the linked config asset.", MessageType.Info);
                 EditorGUILayout.ObjectField("Config", AssetDatabase.LoadAssetAtPath<Object>(result.Config.ConfigPath), typeof(Object), false);
-                EditorGUILayout.LabelField("RuleHash", result.Config.RuleHash);
                 DrawPausedHandlers(assetGuid);
                 DrawValidationResults(index, assetGuid, result.Config.ConfigGuid);
             }

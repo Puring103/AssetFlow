@@ -11,7 +11,9 @@ namespace AssetFlow.Editor.UI
 {
     internal sealed class AssetFlowConfigPanelDrawer : IDisposable
     {
-        private const float HandlerRowHeight = 30f;
+        private const float HandlerRowHeight = 38f;
+        private const float HandlerRemoveButtonWidth = 22f;
+        private const float HandlerTargetBadgeWidth = 92f;
         private static readonly string[] TabLabels = { "Pre Import", "Post Import", "Validators" };
         private static readonly string[] TabIds = { PreImportTab, PostImportTab, ValidatorsTab };
         private const string PreImportTab = "PreImport";
@@ -28,8 +30,9 @@ namespace AssetFlow.Editor.UI
         private UnityEngine.Object presetEditSessionTarget;
         private readonly Dictionary<string, List<Type>> addableHandlerTypesByKey = new Dictionary<string, List<Type>>();
         private string selectedTab = PreImportTab;
+        private string expandedHandlerKey = string.Empty;
 
-        public void Draw(
+        public bool Draw(
             AssetFlowConfig config,
             SerializedObject serializedObject,
             string title,
@@ -37,12 +40,15 @@ namespace AssetFlow.Editor.UI
             int managedCount,
             int staleCount,
             int issueCount,
+            bool showApplyButton,
             Action apply)
         {
             EnsureStyles();
+            var changed = false;
 
             serializedObject.Update();
             DrawHeader(title, subtitle);
+            EditorGUI.BeginChangeCheck();
             using (new EditorGUILayout.VerticalScope(sectionBoxStyle))
             {
                 var includeSubfolders = serializedObject.FindProperty("includeSubfolders");
@@ -50,7 +56,8 @@ namespace AssetFlow.Editor.UI
                     EditorGUILayout.PropertyField(includeSubfolders, new GUIContent("Include Subfolders"));
             }
 
-            serializedObject.ApplyModifiedProperties();
+            changed |= EditorGUI.EndChangeCheck();
+            changed |= serializedObject.ApplyModifiedProperties();
 
             using (new EditorGUILayout.VerticalScope(sectionBoxStyle))
             using (new EditorGUILayout.HorizontalScope())
@@ -62,14 +69,19 @@ namespace AssetFlow.Editor.UI
 
             EditorGUILayout.Space(8f);
             DrawTabs();
-            DrawSelectedList(config, serializedObject);
-            EditorGUILayout.Space(10f);
-            using (new EditorGUILayout.HorizontalScope())
+            changed |= DrawSelectedList(config, serializedObject);
+            if (showApplyButton || changed)
             {
-                GUILayout.FlexibleSpace();
-                if (GUILayout.Button("Apply", GUILayout.Width(120f), GUILayout.Height(28f)))
-                    apply?.Invoke();
+                EditorGUILayout.Space(10f);
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    GUILayout.FlexibleSpace();
+                    if (GUILayout.Button("Apply", GUILayout.Width(120f), GUILayout.Height(28f)))
+                        apply?.Invoke();
+                }
             }
+
+            return changed;
         }
 
         public void Dispose()
@@ -83,6 +95,7 @@ namespace AssetFlow.Editor.UI
             presetEditSession?.Dispose();
             presetEditSession = null;
             presetEditSessionTarget = null;
+            expandedHandlerKey = string.Empty;
         }
 
         private void DrawHeader(string title, string subtitle)
@@ -114,8 +127,9 @@ namespace AssetFlow.Editor.UI
             selectedTab = TabIds[GUILayout.Toolbar(selectedIndex, TabLabels)];
         }
 
-        private void DrawSelectedList(AssetFlowConfig config, SerializedObject serializedObject)
+        private bool DrawSelectedList(AssetFlowConfig config, SerializedObject serializedObject)
         {
+            var changed = false;
             serializedObject.Update();
             var propertyName = selectedTab == PreImportTab
                 ? "preImportProcessors"
@@ -126,7 +140,7 @@ namespace AssetFlow.Editor.UI
             if (property == null)
             {
                 EditorGUILayout.HelpBox($"Missing serialized property: {propertyName}", MessageType.Error);
-                return;
+                return false;
             }
 
             using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
@@ -142,14 +156,16 @@ namespace AssetFlow.Editor.UI
                     EditorGUILayout.HelpBox("No entries configured.", MessageType.Info);
 
                 for (var i = 0; i < property.arraySize; i++)
-                    DrawHandlerListItem(config, property, i);
+                    changed |= DrawHandlerListItem(config, property, i);
             }
 
-            serializedObject.ApplyModifiedProperties();
+            changed |= serializedObject.ApplyModifiedProperties();
+            return changed;
         }
 
-        private void DrawHandlerListItem(AssetFlowConfig config, SerializedProperty property, int index)
+        private bool DrawHandlerListItem(AssetFlowConfig config, SerializedProperty property, int index)
         {
+            var changed = false;
             var element = property.GetArrayElementAtIndex(index);
             var handler = element.objectReferenceValue as AssetFlowHandler;
             using (new EditorGUILayout.VerticalScope(handlerRowStyle))
@@ -171,15 +187,36 @@ namespace AssetFlow.Editor.UI
                 }
 
                 var foldoutRect = new Rect(rowRect.x + 4f, rowRect.y + 5f, 18f, 18f);
-                var removeRect = new Rect(rowRect.xMax - 26f, rowRect.y + 5f, 20f, 20f);
-                var targetRect = new Rect(removeRect.x - 132f, rowRect.y + 7f, 124f, 16f);
-                var titleRect = new Rect(foldoutRect.xMax + 4f, rowRect.y + 4f, Mathf.Max(80f, targetRect.x - foldoutRect.xMax - 12f), 14f);
-                var metaRect = new Rect(titleRect.x, rowRect.y + 17f, titleRect.width, 10f);
+                var removeRect = new Rect(rowRect.xMax - HandlerRemoveButtonWidth - 6f, rowRect.y + 6f, HandlerRemoveButtonWidth, 20f);
+                var targetRect = new Rect(
+                    Mathf.Max(foldoutRect.xMax + 8f, removeRect.x - HandlerTargetBadgeWidth - 6f),
+                    rowRect.y + 6f,
+                    Mathf.Min(HandlerTargetBadgeWidth, Mathf.Max(0f, removeRect.x - foldoutRect.xMax - 14f)),
+                    18f);
+                var textRight = targetRect.width > 0f ? targetRect.x - 6f : removeRect.x - 6f;
+                var titleRect = new Rect(foldoutRect.xMax + 4f, rowRect.y + 4f, Mathf.Max(0f, textRight - foldoutRect.xMax - 4f), 16f);
+                var metaRect = new Rect(titleRect.x, rowRect.y + 21f, titleRect.width, 12f);
 
-                element.isExpanded = EditorGUI.Foldout(foldoutRect, element.isExpanded, GUIContent.none);
-                EditorGUI.LabelField(titleRect, HandlerDisplayName(handler), subHeaderStyle);
-                EditorGUI.LabelField(metaRect, HandlerFullName(handler), mutedStyle);
-                GUI.Label(targetRect, HandlerTargetLabel(handler), badgeStyle);
+                var handlerKey = HandlerExpansionKey(property, index, handler);
+                var isExpanded = string.Equals(expandedHandlerKey, handlerKey, StringComparison.Ordinal);
+                var nextExpanded = EditorGUI.Foldout(foldoutRect, isExpanded, GUIContent.none);
+                if (nextExpanded != isExpanded)
+                {
+                    expandedHandlerKey = nextExpanded ? handlerKey : string.Empty;
+                    element.isExpanded = nextExpanded;
+                    if (!nextExpanded)
+                        DisposePresetEditSession();
+                    isExpanded = nextExpanded;
+                }
+                else
+                {
+                    element.isExpanded = isExpanded;
+                }
+
+                EditorGUI.LabelField(titleRect, new GUIContent(HandlerDisplayName(handler), HandlerFullName(handler)), subHeaderStyle);
+                EditorGUI.LabelField(metaRect, new GUIContent(HandlerShortName(handler), HandlerFullName(handler)), mutedStyle);
+                if (targetRect.width > 0f)
+                    GUI.Label(targetRect, new GUIContent(HandlerTargetLabel(handler), HandlerTargetTooltip(handler)), badgeStyle);
 
                 if (GUI.Button(removeRect, EditorGUIUtility.IconContent("Toolbar Minus"), EditorStyles.miniButton))
                 {
@@ -187,13 +224,24 @@ namespace AssetFlow.Editor.UI
                     GUIUtility.ExitGUI();
                 }
 
-                if (element.isExpanded && handler != null)
-                    DrawHandlerInspector(config, handler);
+                if (isExpanded && handler != null)
+                    changed |= DrawHandlerInspector(config, handler);
             }
+
+            return changed;
         }
 
-        private void DrawHandlerInspector(AssetFlowConfig config, AssetFlowHandler handler)
+        private static string HandlerExpansionKey(SerializedProperty property, int index, AssetFlowHandler handler)
         {
+            if (handler != null)
+                return handler.GetInstanceID().ToString();
+
+            return $"{property.propertyPath}:{index}";
+        }
+
+        private bool DrawHandlerInspector(AssetFlowConfig config, AssetFlowHandler handler)
+        {
+            var changed = false;
             using (new EditorGUI.IndentLevelScope())
             using (var handlerObject = new SerializedObject(handler))
             {
@@ -208,23 +256,28 @@ namespace AssetFlow.Editor.UI
 
                     if (handler is IAssetFlowPresetProcessor && iterator.propertyPath == "preset")
                     {
-                        DrawPresetInspector(config, (IAssetFlowPresetProcessor)handler);
+                        changed |= DrawPresetInspector(config, (IAssetFlowPresetProcessor)handler);
                         continue;
                     }
 
                     EditorGUILayout.PropertyField(iterator, includeChildren: true);
                 }
 
-                handlerObject.ApplyModifiedProperties();
+                changed |= handlerObject.ApplyModifiedProperties();
             }
+
+            if (changed)
+                EditorUtility.SetDirty(config);
+
+            return changed;
         }
 
-        private void DrawPresetInspector(AssetFlowConfig config, IAssetFlowPresetProcessor processor)
+        private bool DrawPresetInspector(AssetFlowConfig config, IAssetFlowPresetProcessor processor)
         {
             if (!AssetFlowPresetUtility.EnsurePreset(config, processor))
             {
                 EditorGUILayout.HelpBox("No compatible asset is available to create a preset for this importer type.", MessageType.Warning);
-                return;
+                return false;
             }
 
             if (presetEditSessionTarget != processor.Preset)
@@ -235,9 +288,18 @@ namespace AssetFlow.Editor.UI
             }
 
             if (presetEditSession != null)
-                presetEditSession.OnInspectorGUI();
+            {
+                var changed = presetEditSession.OnInspectorGUI();
+                if (changed)
+                    EditorUtility.SetDirty(config);
+
+                return changed;
+            }
+
             else
                 EditorGUILayout.HelpBox("No compatible source asset is available to edit this preset inline.", MessageType.Warning);
+
+            return false;
         }
 
         private void DrawAddHandlerMenu(AssetFlowConfig config, SerializedProperty property)
@@ -407,12 +469,29 @@ namespace AssetFlow.Editor.UI
             return handler == null ? "Reference is missing." : handler.GetType().FullName;
         }
 
+        private static string HandlerShortName(AssetFlowHandler handler)
+        {
+            if (handler == null)
+                return "Reference is missing.";
+
+            var type = handler.GetType();
+            return type.Namespace == null ? type.Name : $"{type.Namespace}.{type.Name}";
+        }
+
         private static string HandlerTargetLabel(AssetFlowHandler handler)
         {
             if (handler == null)
                 return "Missing";
 
             return $"{HandlerStageName(handler)} / {FriendlyTypeName(HandlerTargetTypeName(handler.GetType()))}";
+        }
+
+        private static string HandlerTargetTooltip(AssetFlowHandler handler)
+        {
+            if (handler == null)
+                return "Missing handler reference.";
+
+            return HandlerTargetTypeName(handler.GetType());
         }
 
         private static string HandlerStageName(AssetFlowHandler handler)

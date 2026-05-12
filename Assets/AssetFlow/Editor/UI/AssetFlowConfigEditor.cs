@@ -28,10 +28,12 @@ namespace AssetFlow.Editor.UI
         {
             var config = (AssetFlowConfig)target;
             RefreshStats(force: false);
-            var snapshot = GetSnapshot(config);
+            var snapshot = config.ToSnapshot();
+            cachedSnapshot = snapshot;
+            hasCachedSnapshot = true;
             var applied = cachedApplied;
             var hasUnappliedChanges = applied == null || applied.ruleHash != snapshot.RuleHash;
-            panelDrawer.Draw(
+            var changed = panelDrawer.Draw(
                 config,
                 serializedObject,
                 AssetFlowManagerWindow.FriendlyConfigTitle(snapshot),
@@ -39,11 +41,19 @@ namespace AssetFlow.Editor.UI
                 managedCount,
                 outOfDateCount,
                 0,
+                hasUnappliedChanges,
                 () =>
                 {
                     Apply(config, snapshot);
                     RefreshStats(force: true);
                 });
+
+            if (changed)
+            {
+                RefreshStats(force: true);
+                hasUnappliedChanges = true;
+                Repaint();
+            }
 
             if (hasUnappliedChanges)
                 EditorGUILayout.HelpBox("This AssetFlow workflow has unapplied changes.", MessageType.Warning);

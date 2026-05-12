@@ -11,6 +11,7 @@ namespace AssetFlow.Editor.Importing
     public static class AssetFlowPresetUtility
     {
         private const string TemporaryAssetFolder = "Assets/AssetFlow/Editor/TemporaryPresetSources";
+        private static readonly object TemporaryAssetFolderLock = new object();
 
         public static bool EnsurePreset(AssetFlowConfig config, IAssetFlowPresetProcessor processor)
         {
@@ -190,14 +191,15 @@ namespace AssetFlow.Editor.Importing
 
         private static string CreateTemporarySourceAsset(string typeKey)
         {
-            EnsureTemporaryFolder();
+            if (!EnsureTemporaryFolder())
+                return string.Empty;
 
             if (typeKey == typeof(TextureImporter).FullName)
             {
                 var texture = new Texture2D(1, 1);
                 texture.SetPixel(0, 0, Color.white);
                 texture.Apply();
-                var path = $"{TemporaryAssetFolder}/AssetFlowPresetSource.png";
+                var path = $"{TemporaryAssetFolder}/AssetFlowPresetSource-{System.Guid.NewGuid():N}.png";
                 File.WriteAllBytes(path, texture.EncodeToPNG());
                 Object.DestroyImmediate(texture);
                 AssetDatabase.ImportAsset(path);
@@ -206,7 +208,7 @@ namespace AssetFlow.Editor.Importing
 
             if (typeKey == typeof(AudioImporter).FullName)
             {
-                var path = $"{TemporaryAssetFolder}/AssetFlowPresetSource.wav";
+                var path = $"{TemporaryAssetFolder}/AssetFlowPresetSource-{System.Guid.NewGuid():N}.wav";
                 File.WriteAllBytes(path, CreateSilentWavBytes());
                 AssetDatabase.ImportAsset(path);
                 return path;
@@ -215,22 +217,53 @@ namespace AssetFlow.Editor.Importing
             return string.Empty;
         }
 
-        private static void EnsureTemporaryFolder()
+        private static bool EnsureTemporaryFolder()
         {
-            if (!AssetDatabase.IsValidFolder("Assets/AssetFlow/Editor/TemporaryPresetSources"))
+            lock (TemporaryAssetFolderLock)
             {
-                if (!AssetDatabase.IsValidFolder("Assets/AssetFlow/Editor"))
-                    return;
+                if (AssetDatabase.IsValidFolder(TemporaryAssetFolder))
+                    return true;
 
-                AssetDatabase.CreateFolder("Assets/AssetFlow/Editor", "TemporaryPresetSources");
+                DeleteTemporaryFolderMetaIfOrphaned();
+
+                if (AssetDatabase.IsValidFolder("Assets/AssetFlow/Editor"))
+                {
+                    AssetDatabase.CreateFolder("Assets/AssetFlow/Editor", "TemporaryPresetSources");
+                    return AssetDatabase.IsValidFolder(TemporaryAssetFolder);
+                }
+
+                var absolutePath = Path.GetFullPath(TemporaryAssetFolder);
+                Directory.CreateDirectory(absolutePath);
+                AssetDatabase.Refresh();
+                return AssetDatabase.IsValidFolder(TemporaryAssetFolder) || Directory.Exists(absolutePath);
             }
         }
 
         private static void DeleteTemporaryFolderIfEmpty()
         {
-            var guids = AssetDatabase.FindAssets(string.Empty, new[] { TemporaryAssetFolder });
-            if (guids.Length == 0)
-                AssetDatabase.DeleteAsset(TemporaryAssetFolder);
+            lock (TemporaryAssetFolderLock)
+            {
+                if (!AssetDatabase.IsValidFolder(TemporaryAssetFolder) && !Directory.Exists(Path.GetFullPath(TemporaryAssetFolder)))
+                    return;
+
+                var guids = AssetDatabase.FindAssets(string.Empty, new[] { TemporaryAssetFolder });
+                if (guids.Length == 0)
+                {
+                    AssetDatabase.DeleteAsset(TemporaryAssetFolder);
+                    DeleteTemporaryFolderMetaIfOrphaned();
+                }
+            }
+        }
+
+        private static void DeleteTemporaryFolderMetaIfOrphaned()
+        {
+            var absolutePath = Path.GetFullPath(TemporaryAssetFolder);
+            var metaPath = absolutePath + ".meta";
+            if (Directory.Exists(absolutePath) || !File.Exists(metaPath))
+                return;
+
+            File.Delete(metaPath);
+            AssetDatabase.Refresh();
         }
 
         private static byte[] CreateSilentWavBytes()
