@@ -51,7 +51,7 @@ namespace AssetFlow.Editor.Importing
             var indexStore = new AssetFlowIndexStore();
             var index = indexStore.Load();
 
-            foreach (var assetPath in importedAssets)
+            foreach (var assetPath in importedAssets.Concat(movedAssets ?? Array.Empty<string>()))
             {
                 if (IsAssetFlowAsset(assetPath))
                     continue;
