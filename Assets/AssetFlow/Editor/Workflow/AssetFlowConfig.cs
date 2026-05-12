@@ -75,6 +75,33 @@ namespace AssetFlow.Editor.Workflow
             }
         }
 
+        public void AddHandlerAsSubAsset(AssetFlowHandler handler)
+        {
+            if (handler == null)
+                return;
+
+            AddHandlerReference(handler);
+            var configPath = AssetDatabase.GetAssetPath(this);
+            if (!string.IsNullOrEmpty(configPath) && !AssetDatabase.Contains(handler))
+                AssetDatabase.AddObjectToAsset(handler, this);
+
+            EditorUtility.SetDirty(handler);
+            EditorUtility.SetDirty(this);
+        }
+
+        public void RemoveHandlerAndSubAsset(AssetFlowHandler handler)
+        {
+            if (handler == null)
+                return;
+
+            RemoveHandlerReference(handler);
+            if (handler is IAssetFlowPresetProcessor presetProcessor && presetProcessor.Preset != null)
+                RemoveSubAsset(presetProcessor.Preset);
+
+            RemoveSubAsset(handler);
+            EditorUtility.SetDirty(this);
+        }
+
         protected void ResetProcessorLists()
         {
             preImportProcessors = new List<AssetFlowPreImportProcessor>();
@@ -104,6 +131,34 @@ namespace AssetFlow.Editor.Workflow
                 return;
 
             validators.Add(validator);
+        }
+
+        private void AddHandlerReference(AssetFlowHandler handler)
+        {
+            if (handler is AssetFlowPreImportProcessor preImportProcessor)
+            {
+                preImportProcessors.Add(preImportProcessor);
+                return;
+            }
+
+            if (handler is AssetFlowPostImportProcessor postImportProcessor)
+            {
+                postImportProcessors.Add(postImportProcessor);
+                return;
+            }
+
+            if (handler is AssetFlowValidator validator)
+                validators.Add(validator);
+        }
+
+        private void RemoveHandlerReference(AssetFlowHandler handler)
+        {
+            if (handler is AssetFlowPreImportProcessor preImportProcessor)
+                preImportProcessors.Remove(preImportProcessor);
+            else if (handler is AssetFlowPostImportProcessor postImportProcessor)
+                postImportProcessors.Remove(postImportProcessor);
+            else if (handler is AssetFlowValidator validator)
+                validators.Remove(validator);
         }
 
         internal void AddPostImportProcessorForTests(AssetFlowPostImportProcessor processor)

@@ -25,6 +25,19 @@ namespace AssetFlow.Editor.Importing
 
     public static class AssetFlowApplyService
     {
+        public readonly struct AssetFlowManagedStats
+        {
+            public AssetFlowManagedStats(int managedCount, int outOfDateCount)
+            {
+                ManagedCount = managedCount;
+                OutOfDateCount = outOfDateCount;
+            }
+
+            public int ManagedCount { get; }
+
+            public int OutOfDateCount { get; }
+        }
+
         public static List<string> FindManagedAssetsForConfig(
             AssetFlowConfigSnapshot config,
             IEnumerable<AssetFlowConfigSnapshot> allConfigs,
@@ -85,6 +98,36 @@ namespace AssetFlow.Editor.Importing
                 var guid = AssetDatabase.AssetPathToGUID(path);
                 return index.IsOutOfDate(guid, snapshot.ConfigGuid, snapshot.RuleHash);
             });
+        }
+
+        public static AssetFlowManagedStats GetManagedStats(AssetFlowConfig config)
+        {
+            if (config == null)
+                return new AssetFlowManagedStats(0, 0);
+
+            var snapshot = config.ToSnapshot();
+            var configs = AssetFlowConfigScanner.FindConfigSnapshots();
+            var candidates = FindImporterCandidates(snapshot.TypeKey);
+            var managed = FindManagedAssetsForConfig(snapshot, configs, candidates);
+            var index = new AssetFlowIndexStore().Load();
+            var outOfDate = managed.Count(path =>
+            {
+                var guid = AssetDatabase.AssetPathToGUID(path);
+                return index.IsOutOfDate(guid, snapshot.ConfigGuid, snapshot.RuleHash);
+            });
+
+            return new AssetFlowManagedStats(managed.Count, outOfDate);
+        }
+
+        public static List<string> FindManagedAssetsForConfig(AssetFlowConfig config)
+        {
+            if (config == null)
+                return new List<string>();
+
+            var snapshot = config.ToSnapshot();
+            var configs = AssetFlowConfigScanner.FindConfigSnapshots();
+            var candidates = FindImporterCandidates(snapshot.TypeKey);
+            return FindManagedAssetsForConfig(snapshot, configs, candidates);
         }
 
         private static IEnumerable<AssetFlowApplyCandidate> FindImporterCandidates(string typeKey)

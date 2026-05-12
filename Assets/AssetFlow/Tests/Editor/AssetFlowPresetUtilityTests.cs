@@ -44,6 +44,17 @@ namespace AssetFlow.Editor.Tests
         }
 
         [Test]
+        public void CreateTextureConfig_CreatesPresetSubAssetOnDefaultPresetProcessor()
+        {
+            var configPath = AssetFlowConfigFactory.CreateTextureConfig(TestFolder);
+            var config = AssetDatabase.LoadAssetAtPath<AssetFlowTextureConfig>(configPath);
+            var processor = (ApplyTextureImporterPresetProcessor)config.PreImportProcessors[0];
+
+            Assert.That(processor.Preset, Is.Not.Null);
+            Assert.That(AssetDatabase.LoadAllAssetsAtPath(configPath), Has.Some.SameAs(processor.Preset));
+        }
+
+        [Test]
         public void ClearPreset_RemovesPresetReferenceAndSubAsset()
         {
             var texture = new Texture2D(2, 2);

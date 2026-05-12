@@ -53,6 +53,9 @@ namespace AssetFlow.Editor.Importing
 
                 processor.name = processor.GetType().Name;
                 AssetDatabase.AddObjectToAsset(processor, config);
+                if (processor is IAssetFlowPresetProcessor presetProcessor)
+                    AssetFlowPresetUtility.EnsurePreset(config, presetProcessor);
+
                 EditorUtility.SetDirty(processor);
             }
         }

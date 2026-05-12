@@ -32,16 +32,9 @@ namespace AssetFlow.Editor.UI
         private SerializedObject selectedSerializedObject;
         private AssetFlowConfig selectedConfig;
         private AssetFlowManagerConfigView selectedView;
+        private readonly AssetFlowConfigPanelDrawer configPanelDrawer = new AssetFlowConfigPanelDrawer();
         private string selectedNodeKey = string.Empty;
         private string selectedTypeFilter = string.Empty;
-        private string selectedTab = PreImportTab;
-
-        private static readonly string[] TabLabels = { "Pre Import", "Post Import", "Validators" };
-        private static readonly string[] TabIds = { PreImportTab, PostImportTab, ValidatorsTab };
-
-        private const string PreImportTab = "PreImport";
-        private const string PostImportTab = "PostImport";
-        private const string ValidatorsTab = "Validators";
 
         [MenuItem("Window/AssetFlow/AssetFlow Manager")]
         public static void Open()
@@ -60,6 +53,7 @@ namespace AssetFlow.Editor.UI
         private void OnDisable()
         {
             DisposeSelectedSerializedObject();
+            configPanelDrawer.Dispose();
         }
 
         private void OnGUI()
@@ -210,170 +204,88 @@ namespace AssetFlow.Editor.UI
                     return;
                 }
 
-                inspectorScroll = EditorGUILayout.BeginScrollView(inspectorScroll);
-                DrawSummary();
-                EditorGUILayout.Space(8f);
-                DrawTabs();
-                DrawSelectedList();
-                EditorGUILayout.EndScrollView();
-            }
-        }
-
-        private void DrawSummary()
-        {
-            selectedSerializedObject.Update();
-
-            DrawInspectorHeader();
-
-            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
-            {
-                EditorGUILayout.LabelField("Basic Settings", subHeaderStyle);
-                using (new EditorGUI.DisabledScope(true))
-                    EditorGUILayout.ObjectField("Config", selectedConfig, typeof(AssetFlowConfig), false);
-
-                EditorGUILayout.LabelField("Path", selectedView.Snapshot.ConfigPath);
-                EditorGUILayout.LabelField("Type", FriendlyTypeName(selectedView.Snapshot.TypeKey));
-                using (new EditorGUILayout.HorizontalScope())
+                using (var scrollView = new EditorGUILayout.ScrollViewScope(inspectorScroll))
                 {
-                    EditorGUILayout.LabelField("Rule Hash", GUILayout.Width(EditorGUIUtility.labelWidth));
-                    EditorGUILayout.SelectableLabel(selectedView.Snapshot.RuleHash, EditorStyles.textField, GUILayout.Height(EditorGUIUtility.singleLineHeight));
-                }
-
-                var includeSubfolders = selectedSerializedObject.FindProperty("includeSubfolders");
-                if (includeSubfolders != null)
-                    EditorGUILayout.PropertyField(includeSubfolders, new GUIContent("Include Subfolders"));
-            }
-
-            selectedSerializedObject.ApplyModifiedProperties();
-
-            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
-            {
-                EditorGUILayout.LabelField("Statistics", subHeaderStyle);
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    DrawStat("Managed", selectedView.ManagedAssetPaths.Count.ToString());
-                    DrawStat("Out of date", selectedView.OutOfDateCount.ToString());
-                    DrawStat("Validation", selectedView.ValidationCount.ToString());
-                }
-            }
-
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                if (GUILayout.Button("Ping", GUILayout.Width(90f)))
-                {
-                    Selection.activeObject = selectedConfig;
-                    EditorGUIUtility.PingObject(selectedConfig);
-                }
-
-                if (GUILayout.Button("Apply To Managed Assets", GUILayout.Width(180f)))
-                {
-                    var count = AssetFlowApplyService.ApplyToManagedAssets(selectedConfig);
-                    EditorUtility.DisplayDialog("AssetFlow", $"Applied workflow to {count} managed assets.", "OK");
-                    Refresh();
-                }
-
-                if (GUILayout.Button("Refresh Dependencies", GUILayout.Width(160f)))
-                {
-                    AssetFlowDependency.RegisterAll();
-                    Refresh();
+                    inspectorScroll = scrollView.scrollPosition;
+                    configPanelDrawer.Draw(
+                        selectedConfig,
+                        selectedSerializedObject,
+                        RootLabel(selectedView.Snapshot),
+                        selectedView.Snapshot.ConfigPath,
+                        selectedView.ManagedAssetPaths.Count,
+                        selectedView.OutOfDateCount,
+                        selectedView.ValidationCount,
+                        ApplySelectedConfig);
                 }
             }
         }
 
-        private void DrawInspectorHeader()
+        private void ApplySelectedConfig()
         {
-            var rect = GUILayoutUtility.GetRect(1f, 48f, GUILayout.ExpandWidth(true));
-            if (Event.current.type == EventType.Repaint)
-                EditorGUI.DrawRect(rect, new Color(0.16f, 0.19f, 0.22f, 1f));
-
-            var icon = EditorGUIUtility.IconContent("ScriptableObject Icon").image;
-            if (icon != null)
-                GUI.DrawTexture(new Rect(rect.x + 10f, rect.y + 10f, 28f, 28f), icon, ScaleMode.ScaleToFit);
-
-            var titleRect = new Rect(rect.x + 48f, rect.y + 7f, rect.width - 60f, 20f);
-            var subtitleRect = new Rect(rect.x + 48f, rect.y + 27f, rect.width - 60f, 18f);
-            GUI.Label(titleRect, RootLabel(selectedView.Snapshot), headerStyle);
-            GUI.Label(subtitleRect, selectedView.Snapshot.ConfigPath, mutedStyle);
-        }
-
-        private void DrawStat(string label, string value)
-        {
-            using (new EditorGUILayout.VerticalScope(GUILayout.MinWidth(96f), GUILayout.ExpandWidth(true)))
-            {
-                EditorGUILayout.LabelField(value, headerStyle);
-                EditorGUILayout.LabelField(label, mutedStyle);
-            }
-        }
-
-        private void DrawTabs()
-        {
-            var selectedIndex = Mathf.Max(0, Array.IndexOf(TabIds, selectedTab));
-            var nextIndex = GUILayout.Toolbar(selectedIndex, TabLabels);
-            selectedTab = TabIds[nextIndex];
-        }
-
-        private void DrawSelectedList()
-        {
-            selectedSerializedObject.Update();
-
-            var propertyName = selectedTab == PreImportTab
-                ? "preImportProcessors"
-                : selectedTab == PostImportTab
-                    ? "postImportProcessors"
-                    : "validators";
-            var property = selectedSerializedObject.FindProperty(propertyName);
-            if (property == null)
-            {
-                EditorGUILayout.HelpBox($"Missing serialized property: {propertyName}", MessageType.Error);
-                return;
-            }
-
-            EditorGUILayout.Space(6f);
-            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
-            {
-                EditorGUILayout.LabelField(TabLabels[Array.IndexOf(TabIds, selectedTab)], subHeaderStyle);
-                if (property.isArray && property.arraySize == 0)
-                    EditorGUILayout.HelpBox("No entries configured.", MessageType.Info);
-
-                EditorGUILayout.PropertyField(property, includeChildren: true);
-            }
-            selectedSerializedObject.ApplyModifiedProperties();
+            var count = AssetFlowApplyService.ApplyToManagedAssets(selectedConfig);
+            EditorUtility.DisplayDialog("AssetFlow", $"Applied workflow to {count} managed assets.", "OK");
+            Refresh();
         }
 
         private void EnsureStyles()
         {
-            if (headerStyle != null)
-                return;
+            if (headerStyle == null)
+            {
+                headerStyle = new GUIStyle(EditorStyles.boldLabel)
+                {
+                    fontSize = 13
+                };
+            }
 
-            headerStyle = new GUIStyle(EditorStyles.boldLabel)
+            if (subHeaderStyle == null)
             {
-                fontSize = 13
-            };
-            subHeaderStyle = new GUIStyle(EditorStyles.boldLabel)
+                subHeaderStyle = new GUIStyle(EditorStyles.boldLabel)
+                {
+                    fontSize = 11
+                };
+            }
+
+            if (mutedStyle == null)
             {
-                fontSize = 11
-            };
-            mutedStyle = new GUIStyle(EditorStyles.miniLabel)
+                mutedStyle = new GUIStyle(EditorStyles.miniLabel)
+                {
+                    normal = { textColor = EditorGUIUtility.isProSkin ? new Color(0.68f, 0.68f, 0.68f) : new Color(0.35f, 0.35f, 0.35f) }
+                };
+            }
+
+            if (treeLabelStyle == null)
             {
-                normal = { textColor = EditorGUIUtility.isProSkin ? new Color(0.68f, 0.68f, 0.68f) : new Color(0.35f, 0.35f, 0.35f) }
-            };
-            treeLabelStyle = new GUIStyle(EditorStyles.label)
+                treeLabelStyle = new GUIStyle(EditorStyles.label)
+                {
+                    clipping = TextClipping.Clip
+                };
+            }
+
+            if (selectedTreeLabelStyle == null)
             {
-                clipping = TextClipping.Clip
-            };
-            selectedTreeLabelStyle = new GUIStyle(treeLabelStyle)
+                selectedTreeLabelStyle = new GUIStyle(treeLabelStyle)
+                {
+                    normal = { textColor = Color.white }
+                };
+            }
+
+            if (badgeStyle == null)
             {
-                normal = { textColor = Color.white }
-            };
-            badgeStyle = new GUIStyle(EditorStyles.miniLabel)
+                badgeStyle = new GUIStyle(EditorStyles.miniLabel)
+                {
+                    alignment = TextAnchor.MiddleCenter,
+                    normal = { textColor = EditorGUIUtility.isProSkin ? new Color(0.78f, 0.86f, 0.95f) : new Color(0.20f, 0.32f, 0.45f) }
+                };
+            }
+
+            if (warningBadgeStyle == null)
             {
-                alignment = TextAnchor.MiddleCenter,
-                normal = { textColor = EditorGUIUtility.isProSkin ? new Color(0.78f, 0.86f, 0.95f) : new Color(0.20f, 0.32f, 0.45f) }
-            };
-            warningBadgeStyle = new GUIStyle(badgeStyle)
-            {
-                normal = { textColor = new Color(1f, 0.72f, 0.25f) }
-            };
+                warningBadgeStyle = new GUIStyle(badgeStyle)
+                {
+                    normal = { textColor = new Color(1f, 0.72f, 0.25f) }
+                };
+            }
+
         }
 
         private void SelectNode(AssetFlowManagerTreeNode node)
@@ -383,13 +295,21 @@ namespace AssetFlow.Editor.UI
             selectedNodeKey = node.Key;
             DisposeSelectedSerializedObject();
             selectedSerializedObject = new SerializedObject(selectedConfig);
+            configPanelDrawer.Dispose();
 
-            if (node.Kind != AssetFlowManagerTreeItemKind.Asset)
+            SelectProjectObject(node);
+        }
+
+        private void SelectProjectObject(AssetFlowManagerTreeNode node)
+        {
+            var asset = node.Kind == AssetFlowManagerTreeItemKind.Config
+                ? selectedConfig
+                : AssetDatabase.LoadMainAssetAtPath(node.Path);
+            if (asset == null)
                 return;
 
-            var asset = AssetDatabase.LoadMainAssetAtPath(node.Path);
-            if (asset != null)
-                Selection.activeObject = asset;
+            Selection.activeObject = asset;
+            EditorGUIUtility.PingObject(asset);
         }
 
         private void Refresh()
@@ -542,6 +462,7 @@ namespace AssetFlow.Editor.UI
             selectedSerializedObject = null;
         }
 
+
         private static Dictionary<string, List<string>> FindManagedAssetPathsByConfig(IReadOnlyList<AssetFlowConfigSnapshot> snapshots)
         {
             var resolver = new AssetFlowResolver(snapshots);
@@ -578,6 +499,11 @@ namespace AssetFlow.Editor.UI
                 var guid = AssetDatabase.AssetPathToGUID(path);
                 return index.IsOutOfDate(guid, snapshot.ConfigGuid, snapshot.RuleHash);
             });
+        }
+
+        internal static string FriendlyConfigTitle(AssetFlowConfigSnapshot snapshot)
+        {
+            return RootLabel(snapshot);
         }
 
         private static string RootLabel(AssetFlowConfigSnapshot snapshot)

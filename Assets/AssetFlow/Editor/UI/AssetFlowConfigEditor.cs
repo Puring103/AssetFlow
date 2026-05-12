@@ -2,7 +2,6 @@ using AssetFlow.Editor.Core;
 using AssetFlow.Editor.Importing;
 using AssetFlow.Editor.Workflow;
 using UnityEditor;
-using UnityEngine;
 
 namespace AssetFlow.Editor.UI
 {
@@ -10,51 +9,41 @@ namespace AssetFlow.Editor.UI
     public sealed class AssetFlowConfigEditor : UnityEditor.Editor
     {
         private AssetFlowAppliedStateStore appliedStateStore;
+        private AssetFlowConfigPanelDrawer panelDrawer;
+        private int managedCount;
+        private int outOfDateCount;
+        private AssetFlowConfigSnapshot cachedSnapshot;
+        private AssetFlowAppliedConfigRecord cachedApplied;
+        private bool hasCachedSnapshot;
+        private double nextStatsRefreshTime;
 
         private void OnEnable()
         {
             appliedStateStore = new AssetFlowAppliedStateStore();
+            panelDrawer = new AssetFlowConfigPanelDrawer();
+            RefreshStats(force: true);
         }
 
         public override void OnInspectorGUI()
         {
-            serializedObject.Update();
-            DrawDefaultInspector();
-            serializedObject.ApplyModifiedProperties();
-
             var config = (AssetFlowConfig)target;
-            var snapshot = config.ToSnapshot();
-            var applied = appliedStateStore.Find(snapshot.ConfigGuid);
+            RefreshStats(force: false);
+            var snapshot = GetSnapshot(config);
+            var applied = cachedApplied;
             var hasUnappliedChanges = applied == null || applied.ruleHash != snapshot.RuleHash;
-
-            EditorGUILayout.Space(8);
-            EditorGUILayout.LabelField("AssetFlow", EditorStyles.boldLabel);
-            EditorGUILayout.LabelField("TypeKey", config.TypeKey);
-            EditorGUILayout.LabelField("RuleHash", snapshot.RuleHash);
-
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                if (GUILayout.Button("Apply To Managed Assets"))
+            panelDrawer.Draw(
+                config,
+                serializedObject,
+                AssetFlowManagerWindow.FriendlyConfigTitle(snapshot),
+                snapshot.ConfigPath,
+                managedCount,
+                outOfDateCount,
+                0,
+                () =>
+                {
                     Apply(config, snapshot);
-
-                if (GUILayout.Button("Capture From Selected Asset"))
-                    CaptureFromSelection(config);
-            }
-
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                if (GUILayout.Button("Edit Preset"))
-                    EditPreset(config);
-
-                if (GUILayout.Button("Clear Preset"))
-                    ClearPreset(config);
-
-                if (GUILayout.Button("Refresh Dependencies"))
-                    AssetFlowDependency.RegisterAll();
-            }
-
-            var outOfDate = AssetFlowApplyService.CountOutOfDateManagedAssets(config);
-            EditorGUILayout.HelpBox($"Out-of-date managed assets: {outOfDate}", MessageType.Info);
+                    RefreshStats(force: true);
+                });
 
             if (hasUnappliedChanges)
                 EditorGUILayout.HelpBox("This AssetFlow workflow has unapplied changes.", MessageType.Warning);
@@ -62,11 +51,13 @@ namespace AssetFlow.Editor.UI
 
         private void OnDisable()
         {
+            panelDrawer?.Dispose();
+
             if (target == null || appliedStateStore == null)
                 return;
 
             var config = (AssetFlowConfig)target;
-            var snapshot = config.ToSnapshot();
+            var snapshot = GetSnapshot(config);
             var applied = appliedStateStore.Find(snapshot.ConfigGuid);
             if (applied != null && applied.ruleHash == snapshot.RuleHash)
                 return;
@@ -102,31 +93,32 @@ namespace AssetFlow.Editor.UI
             EditorUtility.DisplayDialog("AssetFlow", $"Applied workflow to {count} managed assets.", "OK");
         }
 
-        private static void CaptureFromSelection(AssetFlowConfig config)
+        private void RefreshStats(bool force)
         {
-            var selected = Selection.activeObject;
-            var path = selected == null ? string.Empty : AssetDatabase.GetAssetPath(selected);
-            if (AssetFlowPresetUtility.CaptureFromAsset(config, path))
-                EditorUtility.DisplayDialog("AssetFlow", "Captured importer preset from selected asset.", "OK");
-            else
-                EditorUtility.DisplayDialog("AssetFlow", "Select an asset with the same importer type first.", "OK");
-        }
-
-        private static void EditPreset(AssetFlowConfig config)
-        {
-            if (!AssetFlowPresetUtility.PingPreset(config))
-                EditorUtility.DisplayDialog("AssetFlow", "This workflow has no captured preset.", "OK");
-        }
-
-        private static void ClearPreset(AssetFlowConfig config)
-        {
-            if (!EditorUtility.DisplayDialog("AssetFlow", "Clear the captured importer preset?", "Clear", "Cancel"))
+            if (!force && EditorApplication.timeSinceStartup < nextStatsRefreshTime)
                 return;
 
-            if (AssetFlowPresetUtility.ClearPreset(config))
-                EditorUtility.DisplayDialog("AssetFlow", "Preset cleared.", "OK");
-            else
-                EditorUtility.DisplayDialog("AssetFlow", "This workflow has no preset to clear.", "OK");
+            var config = target as AssetFlowConfig;
+            if (config == null)
+                return;
+
+            cachedSnapshot = config.ToSnapshot();
+            hasCachedSnapshot = true;
+            cachedApplied = appliedStateStore.Find(cachedSnapshot.ConfigGuid);
+            var stats = AssetFlowApplyService.GetManagedStats(config);
+            managedCount = stats.ManagedCount;
+            outOfDateCount = stats.OutOfDateCount;
+            nextStatsRefreshTime = EditorApplication.timeSinceStartup + 1.0d;
+        }
+
+        private AssetFlowConfigSnapshot GetSnapshot(AssetFlowConfig config)
+        {
+            if (hasCachedSnapshot)
+                return cachedSnapshot;
+
+            cachedSnapshot = config.ToSnapshot();
+            hasCachedSnapshot = true;
+            return cachedSnapshot;
         }
     }
 }
