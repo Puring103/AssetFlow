@@ -14,11 +14,19 @@ namespace AssetFlow.Editor.UI
     {
         private const float SidebarWidth = 360f;
         private const float RowHeight = 20f;
+        private const float SidebarIndent = 16f;
 
         private readonly List<AssetFlowManagerConfigView> configViews = new List<AssetFlowManagerConfigView>();
         private readonly List<AssetFlowManagerTreeNode> treeRoots = new List<AssetFlowManagerTreeNode>();
         private readonly HashSet<string> expandedKeys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
+        private GUIStyle headerStyle;
+        private GUIStyle subHeaderStyle;
+        private GUIStyle mutedStyle;
+        private GUIStyle treeLabelStyle;
+        private GUIStyle selectedTreeLabelStyle;
+        private GUIStyle badgeStyle;
+        private GUIStyle warningBadgeStyle;
         private Vector2 treeScroll;
         private Vector2 inspectorScroll;
         private SerializedObject selectedSerializedObject;
@@ -56,6 +64,8 @@ namespace AssetFlow.Editor.UI
 
         private void OnGUI()
         {
+            EnsureStyles();
+
             using (new EditorGUILayout.HorizontalScope())
             {
                 DrawSidebar();
@@ -71,10 +81,12 @@ namespace AssetFlow.Editor.UI
                 using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
                 {
                     DrawTypeFilter();
+                    GUILayout.FlexibleSpace();
                     if (GUILayout.Button("Refresh", EditorStyles.toolbarButton, GUILayout.Width(70f)))
                         Refresh();
                 }
 
+                DrawSidebarSummary();
                 treeScroll = EditorGUILayout.BeginScrollView(treeScroll);
                 if (treeRoots.Count == 0)
                 {
@@ -87,6 +99,17 @@ namespace AssetFlow.Editor.UI
                 }
 
                 EditorGUILayout.EndScrollView();
+            }
+        }
+
+        private void DrawSidebarSummary()
+        {
+            using (new EditorGUILayout.HorizontalScope(EditorStyles.helpBox))
+            {
+                EditorGUILayout.LabelField($"{treeRoots.Count} configs", mutedStyle);
+                GUILayout.FlexibleSpace();
+                var assetCount = treeRoots.Sum(CountAssetNodes);
+                EditorGUILayout.LabelField($"{assetCount} assets", mutedStyle, GUILayout.Width(80f));
             }
         }
 
@@ -119,10 +142,13 @@ namespace AssetFlow.Editor.UI
         {
             var rect = GUILayoutUtility.GetRect(1f, RowHeight, GUILayout.ExpandWidth(true));
             var selected = string.Equals(selectedNodeKey, node.Key, StringComparison.Ordinal);
+            if (Event.current.type == EventType.Repaint && node.Kind == AssetFlowManagerTreeItemKind.Config)
+                EditorGUI.DrawRect(rect, new Color(1f, 1f, 1f, 0.025f));
+
             if (selected)
                 EditorGUI.DrawRect(rect, new Color(0.24f, 0.36f, 0.52f, 0.85f));
 
-            var contentRect = new Rect(rect.x + indent * 16f, rect.y, rect.width - indent * 16f, rect.height);
+            var contentRect = new Rect(rect.x + indent * SidebarIndent, rect.y, rect.width - indent * SidebarIndent, rect.height);
             var hasChildren = node.Children.Count > 0;
             var expanded = expandedKeys.Contains(node.Key);
             if (hasChildren)
@@ -140,7 +166,7 @@ namespace AssetFlow.Editor.UI
                 GUI.DrawTexture(iconRect, node.Icon, ScaleMode.ScaleToFit);
 
             var labelRect = new Rect(iconRect.xMax + 4f, contentRect.y, contentRect.width - 36f, contentRect.height);
-            EditorGUI.LabelField(labelRect, new GUIContent(node.Label, node.Path));
+            DrawTreeLabel(node, labelRect, selected);
 
             if (Event.current.type == EventType.MouseDown && rect.Contains(Event.current.mousePosition))
             {
@@ -153,6 +179,24 @@ namespace AssetFlow.Editor.UI
 
             foreach (var child in node.Children)
                 DrawTreeNode(child, indent + 1);
+        }
+
+        private void DrawTreeLabel(AssetFlowManagerTreeNode node, Rect labelRect, bool selected)
+        {
+            var style = selected ? selectedTreeLabelStyle : treeLabelStyle;
+            if (node.Kind != AssetFlowManagerTreeItemKind.Config)
+            {
+                EditorGUI.LabelField(labelRect, new GUIContent(node.Label, node.Path), style);
+                return;
+            }
+
+            var badgeText = node.ConfigView.OutOfDateCount > 0 ? $"{node.ConfigView.OutOfDateCount} stale" : $"{node.ConfigView.ManagedAssetPaths.Count} assets";
+            var badgeWidth = Mathf.Min(86f, Mathf.Max(54f, badgeStyle.CalcSize(new GUIContent(badgeText)).x + 12f));
+            var textRect = new Rect(labelRect.x, labelRect.y, Mathf.Max(40f, labelRect.width - badgeWidth - 6f), labelRect.height);
+            var badgeRect = new Rect(textRect.xMax + 4f, labelRect.y + 2f, badgeWidth, labelRect.height - 4f);
+
+            EditorGUI.LabelField(textRect, new GUIContent(node.Label, node.Path), style);
+            GUI.Label(badgeRect, badgeText, node.ConfigView.OutOfDateCount > 0 ? warningBadgeStyle : badgeStyle);
         }
 
         private void DrawInspector()
@@ -179,36 +223,43 @@ namespace AssetFlow.Editor.UI
         {
             selectedSerializedObject.Update();
 
-            EditorGUILayout.LabelField(RootLabel(selectedView.Snapshot), EditorStyles.boldLabel);
-            using (new EditorGUI.DisabledScope(true))
-            {
-                EditorGUILayout.ObjectField("Config", selectedConfig, typeof(AssetFlowConfig), false);
-            }
+            DrawInspectorHeader();
 
-            EditorGUILayout.LabelField("Path", selectedView.Snapshot.ConfigPath);
-            EditorGUILayout.LabelField("Type", FriendlyTypeName(selectedView.Snapshot.TypeKey));
-            using (new EditorGUILayout.HorizontalScope())
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
             {
-                EditorGUILayout.LabelField("Rule Hash", GUILayout.Width(EditorGUIUtility.labelWidth));
-                EditorGUILayout.SelectableLabel(selectedView.Snapshot.RuleHash, EditorStyles.textField, GUILayout.Height(EditorGUIUtility.singleLineHeight));
-            }
+                EditorGUILayout.LabelField("Basic Settings", subHeaderStyle);
+                using (new EditorGUI.DisabledScope(true))
+                    EditorGUILayout.ObjectField("Config", selectedConfig, typeof(AssetFlowConfig), false);
 
-            using (new EditorGUILayout.HorizontalScope())
-            {
-                EditorGUILayout.LabelField($"Managed: {selectedView.ManagedAssetPaths.Count}", GUILayout.Width(110f));
-                EditorGUILayout.LabelField($"Out of date: {selectedView.OutOfDateCount}", GUILayout.Width(120f));
-                EditorGUILayout.LabelField($"Validation records: {selectedView.ValidationCount}", GUILayout.Width(170f));
-            }
+                EditorGUILayout.LabelField("Path", selectedView.Snapshot.ConfigPath);
+                EditorGUILayout.LabelField("Type", FriendlyTypeName(selectedView.Snapshot.TypeKey));
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    EditorGUILayout.LabelField("Rule Hash", GUILayout.Width(EditorGUIUtility.labelWidth));
+                    EditorGUILayout.SelectableLabel(selectedView.Snapshot.RuleHash, EditorStyles.textField, GUILayout.Height(EditorGUIUtility.singleLineHeight));
+                }
 
-            var includeSubfolders = selectedSerializedObject.FindProperty("includeSubfolders");
-            if (includeSubfolders != null)
-                EditorGUILayout.PropertyField(includeSubfolders, new GUIContent("Include Subfolders"));
+                var includeSubfolders = selectedSerializedObject.FindProperty("includeSubfolders");
+                if (includeSubfolders != null)
+                    EditorGUILayout.PropertyField(includeSubfolders, new GUIContent("Include Subfolders"));
+            }
 
             selectedSerializedObject.ApplyModifiedProperties();
 
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                EditorGUILayout.LabelField("Statistics", subHeaderStyle);
+                using (new EditorGUILayout.HorizontalScope())
+                {
+                    DrawStat("Managed", selectedView.ManagedAssetPaths.Count.ToString());
+                    DrawStat("Out of date", selectedView.OutOfDateCount.ToString());
+                    DrawStat("Validation", selectedView.ValidationCount.ToString());
+                }
+            }
+
             using (new EditorGUILayout.HorizontalScope())
             {
-                if (GUILayout.Button("Ping Config", GUILayout.Width(110f)))
+                if (GUILayout.Button("Ping", GUILayout.Width(90f)))
                 {
                     Selection.activeObject = selectedConfig;
                     EditorGUIUtility.PingObject(selectedConfig);
@@ -226,6 +277,31 @@ namespace AssetFlow.Editor.UI
                     AssetFlowDependency.RegisterAll();
                     Refresh();
                 }
+            }
+        }
+
+        private void DrawInspectorHeader()
+        {
+            var rect = GUILayoutUtility.GetRect(1f, 48f, GUILayout.ExpandWidth(true));
+            if (Event.current.type == EventType.Repaint)
+                EditorGUI.DrawRect(rect, new Color(0.16f, 0.19f, 0.22f, 1f));
+
+            var icon = EditorGUIUtility.IconContent("ScriptableObject Icon").image;
+            if (icon != null)
+                GUI.DrawTexture(new Rect(rect.x + 10f, rect.y + 10f, 28f, 28f), icon, ScaleMode.ScaleToFit);
+
+            var titleRect = new Rect(rect.x + 48f, rect.y + 7f, rect.width - 60f, 20f);
+            var subtitleRect = new Rect(rect.x + 48f, rect.y + 27f, rect.width - 60f, 18f);
+            GUI.Label(titleRect, RootLabel(selectedView.Snapshot), headerStyle);
+            GUI.Label(subtitleRect, selectedView.Snapshot.ConfigPath, mutedStyle);
+        }
+
+        private void DrawStat(string label, string value)
+        {
+            using (new EditorGUILayout.VerticalScope(GUILayout.MinWidth(96f), GUILayout.ExpandWidth(true)))
+            {
+                EditorGUILayout.LabelField(value, headerStyle);
+                EditorGUILayout.LabelField(label, mutedStyle);
             }
         }
 
@@ -253,12 +329,51 @@ namespace AssetFlow.Editor.UI
             }
 
             EditorGUILayout.Space(6f);
-            EditorGUILayout.LabelField(TabLabels[Array.IndexOf(TabIds, selectedTab)], EditorStyles.boldLabel);
-            if (property.isArray && property.arraySize == 0)
-                EditorGUILayout.HelpBox("No entries configured.", MessageType.Info);
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                EditorGUILayout.LabelField(TabLabels[Array.IndexOf(TabIds, selectedTab)], subHeaderStyle);
+                if (property.isArray && property.arraySize == 0)
+                    EditorGUILayout.HelpBox("No entries configured.", MessageType.Info);
 
-            EditorGUILayout.PropertyField(property, includeChildren: true);
+                EditorGUILayout.PropertyField(property, includeChildren: true);
+            }
             selectedSerializedObject.ApplyModifiedProperties();
+        }
+
+        private void EnsureStyles()
+        {
+            if (headerStyle != null)
+                return;
+
+            headerStyle = new GUIStyle(EditorStyles.boldLabel)
+            {
+                fontSize = 13
+            };
+            subHeaderStyle = new GUIStyle(EditorStyles.boldLabel)
+            {
+                fontSize = 11
+            };
+            mutedStyle = new GUIStyle(EditorStyles.miniLabel)
+            {
+                normal = { textColor = EditorGUIUtility.isProSkin ? new Color(0.68f, 0.68f, 0.68f) : new Color(0.35f, 0.35f, 0.35f) }
+            };
+            treeLabelStyle = new GUIStyle(EditorStyles.label)
+            {
+                clipping = TextClipping.Clip
+            };
+            selectedTreeLabelStyle = new GUIStyle(treeLabelStyle)
+            {
+                normal = { textColor = Color.white }
+            };
+            badgeStyle = new GUIStyle(EditorStyles.miniLabel)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                normal = { textColor = EditorGUIUtility.isProSkin ? new Color(0.78f, 0.86f, 0.95f) : new Color(0.20f, 0.32f, 0.45f) }
+            };
+            warningBadgeStyle = new GUIStyle(badgeStyle)
+            {
+                normal = { textColor = new Color(1f, 0.72f, 0.25f) }
+            };
         }
 
         private void SelectNode(AssetFlowManagerTreeNode node)
@@ -496,6 +611,14 @@ namespace AssetFlow.Editor.UI
                 return normalizedAsset.Substring(rootFolder.Length + 1);
 
             return normalizedAsset;
+        }
+
+        private static int CountAssetNodes(AssetFlowManagerTreeNode node)
+        {
+            var count = node.Kind == AssetFlowManagerTreeItemKind.Asset ? 1 : 0;
+            foreach (var child in node.Children)
+                count += CountAssetNodes(child);
+            return count;
         }
 
         private sealed class AssetFlowManagerConfigView
