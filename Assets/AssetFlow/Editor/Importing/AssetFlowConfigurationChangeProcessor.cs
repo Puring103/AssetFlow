@@ -94,7 +94,8 @@ namespace AssetFlow.Editor.Importing
         private static bool IsIgnoredAssetPath(string path)
         {
             return path.EndsWith(".asset", StringComparison.OrdinalIgnoreCase)
-                   || path.IndexOf("/AssetFlow.", StringComparison.OrdinalIgnoreCase) >= 0;
+                   || path.IndexOf("/AssetFlow.", StringComparison.OrdinalIgnoreCase) >= 0
+                   || AssetFlowPresetUtility.IsTemplateSourceAsset(path);
         }
     }
 }

@@ -52,6 +52,35 @@ namespace AssetFlow.Editor.Tests
         }
 
         [Test]
+        public void GetPausedKeysForAsset_ReturnsSessionStateKeysAfterNewGuardIsCreated()
+        {
+            var firstGuard = new AssetFlowLoopGuard(threshold: 1, useSessionState: true);
+            var secondGuard = new AssetFlowLoopGuard(threshold: 1, useSessionState: true);
+            var key = new AssetFlowLoopKey(
+                "session-asset",
+                "session-config",
+                AssetFlowStage.Validation,
+                "SessionHandler");
+
+            try
+            {
+                firstGuard.ShouldRun(key, "chain");
+                firstGuard.ShouldRun(key, "chain");
+
+                Assert.That(secondGuard.GetPausedKeysForAsset("session-asset"), Is.EqualTo(new[] { key }));
+
+                secondGuard.Retry(key);
+
+                Assert.That(firstGuard.IsPaused(key), Is.False);
+            }
+            finally
+            {
+                firstGuard.Retry(key);
+                secondGuard.Retry(key);
+            }
+        }
+
+        [Test]
         public void ShouldRun_UsesRollingWindowWhenChainIdIsEmpty()
         {
             var now = new System.DateTime(2026, 1, 1, 0, 0, 0, System.DateTimeKind.Utc);

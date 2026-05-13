@@ -38,6 +38,7 @@ namespace AssetFlow.Editor.Importing
 
             AssetDatabase.CreateAsset(config, assetPath);
             AddChildHandlers(config);
+            AssetFlowPresetUtility.EnsureTemplateImporter(config);
             EditorUtility.SetDirty(config);
             AssetDatabase.SaveAssets();
             AssetDatabase.ImportAsset(assetPath);
@@ -53,9 +54,6 @@ namespace AssetFlow.Editor.Importing
 
                 processor.name = processor.GetType().Name;
                 AssetDatabase.AddObjectToAsset(processor, config);
-                if (processor is IAssetFlowPresetProcessor presetProcessor)
-                    AssetFlowPresetUtility.EnsurePreset(config, presetProcessor);
-
                 EditorUtility.SetDirty(processor);
             }
         }

@@ -25,7 +25,7 @@ namespace AssetFlow.Editor.Tests
         }
 
         [Test]
-        public void CreateTextureConfig_CreatesRecommendedAssetWithDefaultPresetProcessor()
+        public void CreateTextureConfig_CreatesRecommendedAssetWithDefaultTemplateProcessor()
         {
             var path = AssetFlowConfigFactory.CreateTextureConfig(TestFolder);
 
@@ -38,7 +38,7 @@ namespace AssetFlow.Editor.Tests
         }
 
         [Test]
-        public void CreateModelAndAudioConfig_CreateTypedConfigsWithDefaultPresetProcessor()
+        public void CreateModelAndAudioConfig_CreateTypedConfigsWithDefaultTemplateProcessor()
         {
             var modelPath = AssetFlowConfigFactory.CreateModelConfig(TestFolder);
             var audioPath = AssetFlowConfigFactory.CreateAudioConfig(TestFolder);

@@ -8,7 +8,7 @@ namespace AssetFlow.Editor.Tests
     public sealed class AssetFlowConfigTests
     {
         [Test]
-        public void NewTextureConfig_HasOnePresetProcessorAtTheStart()
+        public void NewTextureConfig_HasOneTemplateProcessorAtTheStart()
         {
             var config = ScriptableObject.CreateInstance<AssetFlowTextureConfig>();
             try
@@ -27,7 +27,7 @@ namespace AssetFlow.Editor.Tests
         }
 
         [Test]
-        public void EnsureSinglePresetProcessor_RemovesDuplicatePresetProcessors()
+        public void EnsureSinglePresetProcessor_RemovesDuplicateTemplateProcessors()
         {
             var config = ScriptableObject.CreateInstance<AssetFlowTextureConfig>();
             try

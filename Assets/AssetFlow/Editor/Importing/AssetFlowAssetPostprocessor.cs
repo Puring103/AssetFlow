@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using AssetFlow.Editor.Core;
 using AssetFlow.Editor.Workflow;
@@ -9,6 +10,8 @@ namespace AssetFlow.Editor.Importing
     public sealed class AssetFlowAssetPostprocessor : AssetPostprocessor
     {
         private static readonly AssetFlowLoopGuard LoopGuard = new AssetFlowLoopGuard(useSessionState: true);
+        private static readonly Dictionary<string, AssetFlowPipelineReport> PreImportReportsByPath =
+            new Dictionary<string, AssetFlowPipelineReport>(StringComparer.OrdinalIgnoreCase);
 
         public static AssetFlowLoopGuard SharedLoopGuard => LoopGuard;
 
@@ -30,13 +33,14 @@ namespace AssetFlow.Editor.Importing
                 return;
 
             AssetImportContextDependsOnConfig(result.Config);
-            AssetFlowPipeline.RunPreImport(
+            var report = AssetFlowPipeline.RunPreImport(
                 assetPath,
                 AssetDatabase.AssetPathToGUID(assetPath),
                 config,
                 importer,
                 LoopGuard,
                 assetPath);
+            RememberPreImportReport(assetPath, report);
         }
 
         private static void OnPostprocessAllAssets(
@@ -72,6 +76,7 @@ namespace AssetFlow.Editor.Importing
                 if (result.Status != AssetFlowResolveStatus.Managed)
                 {
                     var unmanagedAssetGuid = AssetDatabase.AssetPathToGUID(assetPath);
+                    ForgetPreImportReport(assetPath);
                     index.RemoveAsset(unmanagedAssetGuid);
                     index.RemoveAssetAtPath(assetPath);
                     continue;
@@ -83,13 +88,15 @@ namespace AssetFlow.Editor.Importing
 
                 var importedObjects = AssetDatabase.LoadAllAssetsAtPath(assetPath);
                 var assetGuid = AssetDatabase.AssetPathToGUID(assetPath);
-                var report = AssetFlowPipeline.RunPostImportAndValidation(
+                var report = MergeWithPreImportReport(
+                    assetPath,
+                    AssetFlowPipeline.RunPostImportAndValidation(
                     assetPath,
                     assetGuid,
                     config,
                     importedObjects,
                     LoopGuard,
-                    string.Empty);
+                    string.Empty));
                 UpdateIndex(index, assetPath, importer, result.Config, report);
             }
 
@@ -106,8 +113,49 @@ namespace AssetFlow.Editor.Importing
                 if (IsAssetFlowAsset(path))
                     continue;
 
+                ForgetPreImportReport(path);
                 index.RemoveAssetAtPath(path);
             }
+        }
+
+        private static void RememberPreImportReport(string assetPath, AssetFlowPipelineReport report)
+        {
+            var normalizedPath = AssetFlowPath.Normalize(assetPath);
+            if (string.IsNullOrEmpty(normalizedPath))
+                return;
+
+            if (report == null || report.Issues.Count == 0)
+            {
+                PreImportReportsByPath.Remove(normalizedPath);
+                return;
+            }
+
+            PreImportReportsByPath[normalizedPath] = report;
+        }
+
+        private static void ForgetPreImportReport(string assetPath)
+        {
+            var normalizedPath = AssetFlowPath.Normalize(assetPath);
+            if (!string.IsNullOrEmpty(normalizedPath))
+                PreImportReportsByPath.Remove(normalizedPath);
+        }
+
+        private static AssetFlowPipelineReport MergeWithPreImportReport(
+            string assetPath,
+            AssetFlowPipelineReport postImportReport)
+        {
+            var normalizedPath = AssetFlowPath.Normalize(assetPath);
+            if (string.IsNullOrEmpty(normalizedPath)
+                || !PreImportReportsByPath.TryGetValue(normalizedPath, out var preImportReport))
+            {
+                return postImportReport;
+            }
+
+            PreImportReportsByPath.Remove(normalizedPath);
+            var combined = new AssetFlowPipelineReport();
+            combined.AddIssues(preImportReport.Issues);
+            combined.AddIssues(postImportReport?.Issues);
+            return combined;
         }
 
         private static AssetFlowResolveResult Resolve(string path, string typeKey)

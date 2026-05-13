@@ -1,48 +1,52 @@
 using UnityEditor;
-using UnityEditor.Presets;
 using UnityEngine;
 
 namespace AssetFlow.Editor.Workflow
 {
-    public interface IAssetFlowPresetProcessor
+    public interface IAssetFlowImporterTemplateProcessor
     {
-        Preset Preset { get; }
+        AssetImporter TemplateImporter { get; }
+
+        void SetTemplateImporter(AssetImporter value);
     }
 
-    public abstract class ApplyImporterPresetProcessor<TImporter> : AssetFlowPreImportProcessor<TImporter>, IAssetFlowPresetProcessor
+    public abstract class ApplyImporterPresetProcessor<TImporter> : AssetFlowPreImportProcessor<TImporter>, IAssetFlowImporterTemplateProcessor
         where TImporter : AssetImporter
     {
-        [SerializeField] private Preset preset;
+        [SerializeField] private AssetImporter templateImporter;
         [SerializeField] private string versionSalt;
 
-        public Preset Preset => preset;
+        public AssetImporter TemplateImporter => templateImporter;
 
-        public void SetPreset(Preset value)
+        public void SetTemplateImporter(AssetImporter value)
         {
-            preset = value;
+            templateImporter = value;
         }
 
         public override string RuleHashPayload
         {
             get
             {
-                var presetPayload = preset == null ? string.Empty : EditorJsonUtility.ToJson(preset);
-                return $"{base.RuleHashPayload}|preset:{presetPayload}|salt:{versionSalt}";
+                var templatePayload = templateImporter == null ? string.Empty : EditorJsonUtility.ToJson(templateImporter);
+                return $"{base.RuleHashPayload}|template:{templatePayload}|salt:{versionSalt}";
             }
         }
 
         public override void Process(TImporter importer, AssetFlowPreImportContext context)
         {
-            if (preset == null)
+            if (templateImporter == null)
                 return;
 
-            if (!preset.CanBeAppliedTo(importer))
+            if (!(templateImporter is TImporter typedTemplateImporter))
             {
-                context.ReportError("Preset cannot be applied to importer.");
+                context.ReportError("Template importer is incompatible with target importer.");
                 return;
             }
 
-            preset.ApplyTo(importer);
+            if (ReferenceEquals(typedTemplateImporter, importer))
+                return;
+
+            EditorUtility.CopySerialized(typedTemplateImporter, importer);
         }
 
         public void SetVersionSaltForTests(string value)

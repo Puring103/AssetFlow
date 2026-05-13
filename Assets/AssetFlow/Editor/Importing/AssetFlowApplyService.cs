@@ -148,6 +148,8 @@ namespace AssetFlow.Editor.Importing
                 var path = AssetDatabase.GUIDToAssetPath(guid);
                 if (string.IsNullOrEmpty(path) || path.EndsWith(".asset", StringComparison.OrdinalIgnoreCase))
                     continue;
+                if (AssetFlowPresetUtility.IsTemplateSourceAsset(path))
+                    continue;
 
                 var importer = AssetImporter.GetAtPath(path);
                 if (importer == null)

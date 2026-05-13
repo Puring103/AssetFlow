@@ -53,7 +53,7 @@ namespace AssetFlow.Editor.Tests
         }
 
         [Test]
-        public void ApplyToManagedAssets_AppliesImporterPresetsToRealTextureModelAndAudioAssets()
+        public void ApplyToManagedAssets_AppliesTemplateImportersToRealTextureModelAndAudioAssets()
         {
             var textureSource = WritePng(TextureFolder + "/texture-source.png");
             var textureTarget = WritePng(TextureFolder + "/texture-target.png");
@@ -157,6 +157,30 @@ namespace AssetFlow.Editor.Tests
             Assert.That(validationRecord.configGuid, Is.EqualTo(config.ToSnapshot().ConfigGuid));
             Assert.That(validationRecord.severity, Is.EqualTo(AssetFlowIssueSeverity.Warning.ToString()));
             Assert.That(validationRecord.message, Does.Contain(texturePath));
+        }
+
+        [Test]
+        public void AutomaticImport_WritesPreImportIssuesToIndex()
+        {
+            var texturePath = WritePng(TextureFolder + "/pre-import-warning.png");
+            var configPath = AssetFlowConfigFactory.CreateTextureConfig(TextureFolder);
+            var config = AssetDatabase.LoadAssetAtPath<AssetFlowTextureConfig>(configPath);
+            config.ResetToDefaultsForTests();
+            var preProcessor = ScriptableObject.CreateInstance<ReportingPreImportProcessor>();
+            preProcessor.name = nameof(ReportingPreImportProcessor);
+            config.AddHandlerAsSubAsset(preProcessor);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(configPath);
+
+            AssetDatabase.ImportAsset(texturePath, ImportAssetOptions.ForceUpdate);
+
+            var index = new AssetFlowIndexStore().Load();
+            var assetGuid = AssetDatabase.AssetPathToGUID(texturePath);
+            Assert.That(index.ValidationResults, Has.Some.Matches<AssetFlowValidationRecord>(
+                record => record.assetGuid == assetGuid
+                          && record.configGuid == config.ToSnapshot().ConfigGuid
+                          && record.severity == AssetFlowIssueSeverity.Warning.ToString()
+                          && record.message == "pre-import warning"));
         }
 
         [Test]
@@ -483,5 +507,12 @@ namespace AssetFlow.Editor.Tests
                 AssetDatabase.CreateFolder(parent, name);
         }
 
+        private sealed class ReportingPreImportProcessor : AssetFlowPreImportProcessor<TextureImporter>
+        {
+            public override void Process(TextureImporter importer, AssetFlowPreImportContext context)
+            {
+                context.ReportWarning("pre-import warning");
+            }
+        }
     }
 }

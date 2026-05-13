@@ -60,7 +60,7 @@ namespace AssetFlow.Editor.Workflow
             for (var i = 0; i < preImportProcessors.Count; i++)
             {
                 var processor = preImportProcessors[i];
-                if (!(processor is IAssetFlowPresetProcessor))
+                if (!(processor is IAssetFlowImporterTemplateProcessor))
                     continue;
 
                 if (!seen)
@@ -95,9 +95,6 @@ namespace AssetFlow.Editor.Workflow
                 return;
 
             RemoveHandlerReference(handler);
-            if (handler is IAssetFlowPresetProcessor presetProcessor && presetProcessor.Preset != null)
-                RemoveSubAsset(presetProcessor.Preset);
-
             RemoveSubAsset(handler);
             EditorUtility.SetDirty(this);
         }

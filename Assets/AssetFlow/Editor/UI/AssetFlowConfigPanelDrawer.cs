@@ -26,8 +26,8 @@ namespace AssetFlow.Editor.UI
         private GUIStyle badgeStyle;
         private GUIStyle sectionBoxStyle;
         private GUIStyle handlerRowStyle;
-        private AssetFlowPresetEditSession presetEditSession;
-        private UnityEngine.Object presetEditSessionTarget;
+        private UnityEngine.Object templateImporterEditorTarget;
+        private UnityEditor.Editor templateImporterEditor;
         private readonly Dictionary<string, List<Type>> addableHandlerTypesByKey = new Dictionary<string, List<Type>>();
         private string selectedTab = PreImportTab;
         private string expandedHandlerKey = string.Empty;
@@ -86,16 +86,17 @@ namespace AssetFlow.Editor.UI
 
         public void Dispose()
         {
-            DisposePresetEditSession();
+            DisposeTemplateImporterEditor();
             addableHandlerTypesByKey.Clear();
         }
 
-        private void DisposePresetEditSession()
+        private void DisposeTemplateImporterEditor()
         {
-            presetEditSession?.Dispose();
-            presetEditSession = null;
-            presetEditSessionTarget = null;
-            expandedHandlerKey = string.Empty;
+            if (templateImporterEditor != null)
+                UnityEngine.Object.DestroyImmediate(templateImporterEditor);
+
+            templateImporterEditor = null;
+            templateImporterEditorTarget = null;
         }
 
         private void DrawHeader(string title, string subtitle)
@@ -124,7 +125,12 @@ namespace AssetFlow.Editor.UI
         private void DrawTabs()
         {
             var selectedIndex = Mathf.Max(0, Array.IndexOf(TabIds, selectedTab));
-            selectedTab = TabIds[GUILayout.Toolbar(selectedIndex, TabLabels)];
+            var nextTab = TabIds[GUILayout.Toolbar(selectedIndex, TabLabels)];
+            if (nextTab == selectedTab)
+                return;
+
+            selectedTab = nextTab;
+            expandedHandlerKey = string.Empty;
         }
 
         private bool DrawSelectedList(AssetFlowConfig config, SerializedObject serializedObject)
@@ -204,8 +210,6 @@ namespace AssetFlow.Editor.UI
                 {
                     expandedHandlerKey = nextExpanded ? handlerKey : string.Empty;
                     element.isExpanded = nextExpanded;
-                    if (!nextExpanded)
-                        DisposePresetEditSession();
                     isExpanded = nextExpanded;
                 }
                 else
@@ -254,9 +258,9 @@ namespace AssetFlow.Editor.UI
                     if (iterator.propertyPath == "m_Script" || iterator.propertyPath == "versionSalt")
                         continue;
 
-                    if (handler is IAssetFlowPresetProcessor && iterator.propertyPath == "preset")
+                    if (handler is IAssetFlowImporterTemplateProcessor && iterator.propertyPath == "templateImporter")
                     {
-                        changed |= DrawPresetInspector(config, (IAssetFlowPresetProcessor)handler);
+                        changed |= DrawTemplateImporterInspector(config, (IAssetFlowImporterTemplateProcessor)handler);
                         continue;
                     }
 
@@ -272,34 +276,51 @@ namespace AssetFlow.Editor.UI
             return changed;
         }
 
-        private bool DrawPresetInspector(AssetFlowConfig config, IAssetFlowPresetProcessor processor)
+        private bool DrawTemplateImporterInspector(AssetFlowConfig config, IAssetFlowImporterTemplateProcessor processor)
         {
-            if (!AssetFlowPresetUtility.EnsurePreset(config, processor))
+            AssetFlowPresetUtility.RemoveLegacyPresetSubAssets(config);
+            AssetFlowPresetUtility.EnsureTemplateImporter(config);
+
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
             {
-                EditorGUILayout.HelpBox("No compatible asset is available to create a preset for this importer type.", MessageType.Warning);
-                return false;
+                EditorGUILayout.LabelField("Template Importer", EditorStyles.boldLabel);
+                using (new EditorGUI.DisabledScope(true))
+                {
+                    EditorGUILayout.ObjectField(
+                        "Source",
+                        processor.TemplateImporter,
+                        typeof(AssetImporter),
+                        false);
+                }
+
+                var importer = processor.TemplateImporter;
+                if (importer == null)
+                {
+                    DisposeTemplateImporterEditor();
+                    EditorGUILayout.HelpBox("Template importer is being prepared.", MessageType.Info);
+                    return false;
+                }
+
+                if (templateImporterEditorTarget != importer)
+                {
+                    DisposeTemplateImporterEditor();
+                    templateImporterEditorTarget = importer;
+                    templateImporterEditor = UnityEditor.Editor.CreateEditor(importer);
+                }
+
+                if (templateImporterEditor == null)
+                    return false;
+
+                EditorGUI.BeginChangeCheck();
+                templateImporterEditor.OnInspectorGUI();
+                if (!EditorGUI.EndChangeCheck())
+                    return false;
+
+                EditorUtility.SetDirty(importer);
+                EditorUtility.SetDirty((UnityEngine.Object)processor);
+                EditorUtility.SetDirty(config);
+                return true;
             }
-
-            if (presetEditSessionTarget != processor.Preset)
-            {
-                DisposePresetEditSession();
-                presetEditSessionTarget = processor.Preset;
-                presetEditSession = AssetFlowPresetEditSession.Create(config, processor.Preset);
-            }
-
-            if (presetEditSession != null)
-            {
-                var changed = presetEditSession.OnInspectorGUI();
-                if (changed)
-                    EditorUtility.SetDirty(config);
-
-                return changed;
-            }
-
-            else
-                EditorGUILayout.HelpBox("No compatible source asset is available to edit this preset inline.", MessageType.Warning);
-
-            return false;
         }
 
         private void DrawAddHandlerMenu(AssetFlowConfig config, SerializedProperty property)
@@ -332,7 +353,7 @@ namespace AssetFlow.Editor.UI
 
             foreach (var type in candidates)
             {
-                if (typeof(IAssetFlowPresetProcessor).IsAssignableFrom(type) && ContainsHandlerAssignableTo(property, typeof(IAssetFlowPresetProcessor)))
+                if (typeof(IAssetFlowImporterTemplateProcessor).IsAssignableFrom(type) && ContainsHandlerAssignableTo(property, typeof(IAssetFlowImporterTemplateProcessor)))
                     continue;
 
                 yield return type;
@@ -406,8 +427,6 @@ namespace AssetFlow.Editor.UI
             handler.name = type.Name;
             var configPath = AssetDatabase.GetAssetPath(config);
             config.AddHandlerAsSubAsset(handler);
-            if (handler is IAssetFlowPresetProcessor presetProcessor)
-                AssetFlowPresetUtility.EnsurePreset(config, presetProcessor);
             AssetDatabase.SaveAssets();
             if (!string.IsNullOrEmpty(configPath))
                 AssetDatabase.ImportAsset(configPath);
@@ -461,7 +480,13 @@ namespace AssetFlow.Editor.UI
 
         private static string HandlerDisplayName(AssetFlowHandler handler)
         {
-            return handler == null ? "Missing Handler" : ObjectNames.NicifyVariableName(handler.GetType().Name);
+            if (handler == null)
+                return "Missing Handler";
+
+            if (handler is IAssetFlowImporterTemplateProcessor)
+                return ObjectNames.NicifyVariableName(handler.GetType().Name.Replace("PresetProcessor", "TemplateProcessor"));
+
+            return ObjectNames.NicifyVariableName(handler.GetType().Name);
         }
 
         private static string HandlerFullName(AssetFlowHandler handler)

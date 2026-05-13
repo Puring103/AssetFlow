@@ -5,17 +5,17 @@ using UnityEditor.AssetImporters;
 
 namespace AssetFlow.Editor.UI
 {
-    [CustomEditor(typeof(TextureImporter))]
+    [CustomEditor(typeof(TextureImporter), isFallback = true)]
     internal sealed class AssetFlowManagedTextureImporterEditor : AssetFlowManagedImporterEditorBase
     {
     }
 
-    [CustomEditor(typeof(ModelImporter))]
+    [CustomEditor(typeof(ModelImporter), isFallback = true)]
     internal sealed class AssetFlowManagedModelImporterEditor : AssetFlowManagedImporterEditorBase
     {
     }
 
-    [CustomEditor(typeof(AudioImporter))]
+    [CustomEditor(typeof(AudioImporter), isFallback = true)]
     internal sealed class AssetFlowManagedAudioImporterEditor : AssetFlowManagedImporterEditorBase
     {
     }
@@ -85,8 +85,7 @@ namespace AssetFlow.Editor.UI
         {
             var path = importer.assetPath;
             if (string.IsNullOrEmpty(path)
-                || path.IndexOf("/AssetFlow.", System.StringComparison.OrdinalIgnoreCase) >= 0
-                || path.StartsWith(AssetFlowPresetUtility.TemporaryAssetFolder + "/", System.StringComparison.OrdinalIgnoreCase))
+                || path.IndexOf("/AssetFlow.", System.StringComparison.OrdinalIgnoreCase) >= 0)
                 return false;
 
             var resolver = new AssetFlowResolver(AssetFlowConfigScanner.FindConfigSnapshots());
