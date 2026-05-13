@@ -51,21 +51,31 @@ namespace AssetFlow.Editor.Importing
             var indexStore = new AssetFlowIndexStore();
             var index = indexStore.Load();
 
-            foreach (var assetPath in importedAssets.Concat(movedAssets ?? Array.Empty<string>()))
+            RemoveDeletedAndMovedFromAssets(index, deletedAssets, movedFromAssetPaths);
+
+            foreach (var assetPath in (importedAssets ?? Array.Empty<string>()).Concat(movedAssets ?? Array.Empty<string>()))
             {
                 if (IsAssetFlowAsset(assetPath))
                     continue;
 
                 var importer = AssetImporter.GetAtPath(assetPath);
                 if (importer == null)
+                {
+                    index.RemoveAssetAtPath(assetPath);
                     continue;
+                }
 
                 var result = Resolve(assetPath, importer.GetType().FullName);
                 if (result.Status == AssetFlowResolveStatus.Conflict)
                     AssetFlowConflictReporter.Report(assetPath, result);
 
                 if (result.Status != AssetFlowResolveStatus.Managed)
+                {
+                    var unmanagedAssetGuid = AssetDatabase.AssetPathToGUID(assetPath);
+                    index.RemoveAsset(unmanagedAssetGuid);
+                    index.RemoveAssetAtPath(assetPath);
                     continue;
+                }
 
                 var config = AssetFlowConfigScanner.LoadConfig(result.Config);
                 if (config == null)
@@ -84,6 +94,20 @@ namespace AssetFlow.Editor.Importing
             }
 
             indexStore.Save(index);
+        }
+
+        private static void RemoveDeletedAndMovedFromAssets(
+            AssetFlowIndex index,
+            string[] deletedAssets,
+            string[] movedFromAssetPaths)
+        {
+            foreach (var path in (deletedAssets ?? Array.Empty<string>()).Concat(movedFromAssetPaths ?? Array.Empty<string>()))
+            {
+                if (IsAssetFlowAsset(path))
+                    continue;
+
+                index.RemoveAssetAtPath(path);
+            }
         }
 
         private static AssetFlowResolveResult Resolve(string path, string typeKey)

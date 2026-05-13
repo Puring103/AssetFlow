@@ -35,6 +35,10 @@ namespace AssetFlow.Editor.UI
         private readonly AssetFlowConfigPanelDrawer configPanelDrawer = new AssetFlowConfigPanelDrawer();
         private string selectedNodeKey = string.Empty;
         private string selectedTypeFilter = string.Empty;
+        private string cachedIndexSignature = string.Empty;
+        private bool isDrawingInspector;
+        private bool delayedRefreshQueued;
+        private bool configReconcileQueued;
 
         [MenuItem("Window/AssetFlow/AssetFlow Manager")]
         public static void Open()
@@ -47,11 +51,15 @@ namespace AssetFlow.Editor.UI
 
         private void OnEnable()
         {
-            Refresh();
+            EditorApplication.projectChanged += HandleProjectChanged;
+            Refresh(force: true);
         }
 
         private void OnDisable()
         {
+            EditorApplication.projectChanged -= HandleProjectChanged;
+            EditorApplication.delayCall -= RefreshPending;
+            EditorApplication.delayCall -= ReconcileConfigChangesPending;
             DisposeSelectedSerializedObject();
             configPanelDrawer.Dispose();
         }
@@ -59,6 +67,7 @@ namespace AssetFlow.Editor.UI
         private void OnGUI()
         {
             EnsureStyles();
+            RefreshFromCacheIfNeeded();
 
             using (new EditorGUILayout.HorizontalScope())
             {
@@ -76,8 +85,6 @@ namespace AssetFlow.Editor.UI
                 {
                     DrawTypeFilter();
                     GUILayout.FlexibleSpace();
-                    if (GUILayout.Button("Refresh", EditorStyles.toolbarButton, GUILayout.Width(70f)))
-                        Refresh();
                 }
 
                 DrawSidebarSummary();
@@ -164,7 +171,7 @@ namespace AssetFlow.Editor.UI
 
             if (Event.current.type == EventType.MouseDown && rect.Contains(Event.current.mousePosition))
             {
-                SelectNode(node);
+                SelectNode(node, ping: true);
                 Event.current.Use();
             }
 
@@ -206,21 +213,29 @@ namespace AssetFlow.Editor.UI
 
                 using (var scrollView = new EditorGUILayout.ScrollViewScope(inspectorScroll))
                 {
-                    inspectorScroll = scrollView.scrollPosition;
-                    var currentSnapshot = selectedConfig.ToSnapshot();
-                    var currentOutOfDate = CountOutOfDate(selectedView.ManagedAssetPaths, currentSnapshot, new AssetFlowIndexStore().Load());
-                    var changed = configPanelDrawer.Draw(
-                        selectedConfig,
-                        selectedSerializedObject,
-                        RootLabel(currentSnapshot),
-                        currentSnapshot.ConfigPath,
-                        selectedView.ManagedAssetPaths.Count,
-                        currentOutOfDate,
-                        selectedView.ValidationCount,
-                        currentOutOfDate > 0,
-                        ApplySelectedConfig);
-                    if (changed)
-                        Repaint();
+                    isDrawingInspector = true;
+                    try
+                    {
+                        inspectorScroll = scrollView.scrollPosition;
+                        var currentSnapshot = selectedConfig.ToSnapshot();
+                        var currentOutOfDate = CountOutOfDate(selectedView.ManagedAssetPaths, currentSnapshot, new AssetFlowIndexStore().Load());
+                        var changed = configPanelDrawer.Draw(
+                            selectedConfig,
+                            selectedSerializedObject,
+                            RootLabel(currentSnapshot),
+                            currentSnapshot.ConfigPath,
+                            selectedView.ManagedAssetPaths.Count,
+                            currentOutOfDate,
+                            selectedView.ValidationCount,
+                            currentOutOfDate > 0,
+                            ApplySelectedConfig);
+                        if (changed)
+                            RequestConfigReconcile();
+                    }
+                    finally
+                    {
+                        isDrawingInspector = false;
+                    }
                 }
             }
         }
@@ -229,7 +244,61 @@ namespace AssetFlow.Editor.UI
         {
             var count = AssetFlowApplyService.ApplyToManagedAssets(selectedConfig);
             EditorUtility.DisplayDialog("AssetFlow", $"Applied workflow to {count} managed assets.", "OK");
-            Refresh();
+            Refresh(force: true);
+        }
+
+        private void HandleProjectChanged()
+        {
+            RequestRefresh();
+        }
+
+        private void RequestRefresh()
+        {
+            if (!delayedRefreshQueued)
+            {
+                delayedRefreshQueued = true;
+                EditorApplication.delayCall += RefreshPending;
+            }
+
+            Repaint();
+        }
+
+        private void RequestConfigReconcile()
+        {
+            if (!configReconcileQueued)
+            {
+                configReconcileQueued = true;
+                EditorApplication.delayCall += ReconcileConfigChangesPending;
+            }
+
+            Repaint();
+        }
+
+        private void ReconcileConfigChangesPending()
+        {
+            EditorApplication.delayCall -= ReconcileConfigChangesPending;
+            configReconcileQueued = false;
+            if (isDrawingInspector)
+            {
+                RequestConfigReconcile();
+                return;
+            }
+
+            AssetFlowConfigurationChangeProcessor.ProcessConfigurationChanges();
+            Refresh(force: true);
+        }
+
+        private void RefreshPending()
+        {
+            EditorApplication.delayCall -= RefreshPending;
+            delayedRefreshQueued = false;
+            if (isDrawingInspector)
+            {
+                RequestRefresh();
+                return;
+            }
+
+            Refresh(force: true);
         }
 
         private void EnsureStyles()
@@ -293,7 +362,7 @@ namespace AssetFlow.Editor.UI
 
         }
 
-        private void SelectNode(AssetFlowManagerTreeNode node)
+        private void SelectNode(AssetFlowManagerTreeNode node, bool ping)
         {
             selectedView = node.ConfigView;
             selectedConfig = selectedView.Config;
@@ -302,7 +371,29 @@ namespace AssetFlow.Editor.UI
             selectedSerializedObject = new SerializedObject(selectedConfig);
             configPanelDrawer.Dispose();
 
-            SelectProjectObject(node);
+            if (ping)
+                SelectProjectObject(node);
+        }
+
+        private void RetainOrSelectNode(AssetFlowManagerTreeNode node)
+        {
+            if (selectedConfig == node.ConfigView.Config && selectedSerializedObject != null)
+            {
+                selectedView = node.ConfigView;
+                selectedNodeKey = node.Key;
+                return;
+            }
+
+            SelectNode(node, ping: false);
+        }
+
+        private void ClearSelection()
+        {
+            selectedConfig = null;
+            selectedView = null;
+            selectedNodeKey = string.Empty;
+            DisposeSelectedSerializedObject();
+            configPanelDrawer.Dispose();
         }
 
         private void SelectProjectObject(AssetFlowManagerTreeNode node)
@@ -317,20 +408,54 @@ namespace AssetFlow.Editor.UI
             EditorGUIUtility.PingObject(asset);
         }
 
-        private void Refresh()
+        private void RefreshFromCacheIfNeeded()
         {
-            DisposeSelectedSerializedObject();
-            selectedConfig = null;
-            selectedView = null;
-            selectedNodeKey = string.Empty;
-            configViews.Clear();
+            if (isDrawingInspector)
+            {
+                RequestRefresh();
+                return;
+            }
 
+            var index = new AssetFlowIndexStore().Load();
             var snapshots = AssetFlowConfigScanner.FindConfigSnapshots()
                 .OrderBy(snapshot => snapshot.FolderPath, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(snapshot => FriendlyTypeName(snapshot.TypeKey), StringComparer.OrdinalIgnoreCase)
                 .ToList();
+            var signature = BuildCacheSignature(index, snapshots);
+            if (string.Equals(signature, cachedIndexSignature, StringComparison.Ordinal))
+                return;
+
+            Refresh(index, snapshots, signature);
+        }
+
+        private void Refresh(bool force = false)
+        {
+            if (isDrawingInspector)
+            {
+                RequestRefresh();
+                return;
+            }
+
             var index = new AssetFlowIndexStore().Load();
-            var assetsByConfigGuid = FindManagedAssetPathsByConfig(snapshots);
+            var snapshots = AssetFlowConfigScanner.FindConfigSnapshots()
+                .OrderBy(snapshot => snapshot.FolderPath, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(snapshot => FriendlyTypeName(snapshot.TypeKey), StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            var signature = BuildCacheSignature(index, snapshots);
+            if (!force && string.Equals(signature, cachedIndexSignature, StringComparison.Ordinal))
+                return;
+
+            Refresh(index, snapshots, signature);
+        }
+
+        private void Refresh(AssetFlowIndex index, List<AssetFlowConfigSnapshot> snapshots, string signature)
+        {
+            var previousConfigGuid = selectedView?.Snapshot.ConfigGuid ?? string.Empty;
+            configViews.Clear();
+            cachedIndexSignature = signature;
+            var assetsByConfigGuid = FindManagedAssetPathsByConfig(index, snapshots, out var cacheNeedsReconcile);
+            if (cacheNeedsReconcile)
+                RequestConfigReconcile();
 
             foreach (var snapshot in snapshots)
             {
@@ -346,22 +471,23 @@ namespace AssetFlow.Editor.UI
                 configViews.Add(new AssetFlowManagerConfigView(config, snapshot, assetPaths, outOfDate, validationCount));
             }
 
-            RebuildTree();
+            RebuildTree(previousConfigGuid);
             Repaint();
         }
 
-        private void RebuildTree()
+        private void RebuildTree(string preferredConfigGuid = "")
         {
-            var previousConfigGuid = selectedView?.Snapshot.ConfigGuid ?? string.Empty;
             treeRoots.Clear();
             foreach (var view in configViews.Where(IsVisibleByFilter))
                 treeRoots.Add(BuildConfigTree(view));
 
-            var retained = FindNodeByConfigGuid(treeRoots, previousConfigGuid);
+            var retained = FindNodeByConfigGuid(treeRoots, preferredConfigGuid);
             if (retained != null)
-                SelectNode(retained);
+                RetainOrSelectNode(retained);
             else if (treeRoots.Count > 0)
-                SelectNode(treeRoots[0]);
+                SelectNode(treeRoots[0], ping: false);
+            else
+                ClearSelection();
         }
 
         private static AssetFlowManagerTreeNode FindNodeByConfigGuid(IEnumerable<AssetFlowManagerTreeNode> nodes, string configGuid)
@@ -468,33 +594,82 @@ namespace AssetFlow.Editor.UI
         }
 
 
-        private static Dictionary<string, List<string>> FindManagedAssetPathsByConfig(IReadOnlyList<AssetFlowConfigSnapshot> snapshots)
+        internal static Dictionary<string, List<string>> FindManagedAssetPathsByConfig(
+            AssetFlowIndex index,
+            IReadOnlyList<AssetFlowConfigSnapshot> snapshots,
+            out bool cacheNeedsReconcile)
         {
+            cacheNeedsReconcile = false;
             var resolver = new AssetFlowResolver(snapshots);
             var assetsByConfigGuid = snapshots.ToDictionary(
                 snapshot => snapshot.ConfigGuid,
                 _ => new List<string>(),
                 StringComparer.OrdinalIgnoreCase);
 
-            foreach (var guid in AssetDatabase.FindAssets(string.Empty))
+            foreach (var asset in index.Assets)
             {
-                var path = AssetDatabase.GUIDToAssetPath(guid);
-                if (string.IsNullOrEmpty(path) || path.EndsWith(".asset", StringComparison.OrdinalIgnoreCase))
+                if (string.IsNullOrEmpty(asset.assetGuid))
                     continue;
 
-                var importer = AssetImporter.GetAtPath(path);
-                if (importer == null)
-                    continue;
-
-                var result = resolver.Resolve(path, importer.GetType().FullName);
-                if (result.Status == AssetFlowResolveStatus.Managed
-                    && assetsByConfigGuid.TryGetValue(result.Config.ConfigGuid, out var paths))
+                var currentPath = AssetDatabase.GUIDToAssetPath(asset.assetGuid);
+                if (string.IsNullOrEmpty(currentPath))
                 {
-                    paths.Add(path);
+                    cacheNeedsReconcile = true;
+                    continue;
+                }
+
+                var importer = AssetImporter.GetAtPath(currentPath);
+                if (importer == null)
+                {
+                    cacheNeedsReconcile = true;
+                    continue;
+                }
+
+                var result = resolver.Resolve(currentPath, importer.GetType().FullName);
+                if (result.Status != AssetFlowResolveStatus.Managed)
+                {
+                    cacheNeedsReconcile = true;
+                    continue;
+                }
+
+                if (assetsByConfigGuid.TryGetValue(result.Config.ConfigGuid, out var paths))
+                {
+                    if (!string.Equals(asset.assetPath, currentPath, StringComparison.OrdinalIgnoreCase)
+                        || !string.Equals(asset.managedByConfigGuid, result.Config.ConfigGuid, StringComparison.OrdinalIgnoreCase))
+                    {
+                        cacheNeedsReconcile = true;
+                    }
+
+                    paths.Add(AssetFlowPath.Normalize(currentPath));
                 }
             }
 
             return assetsByConfigGuid;
+        }
+
+        internal static string BuildCacheSignature(AssetFlowIndex index, IReadOnlyList<AssetFlowConfigSnapshot> snapshots)
+        {
+            var configPart = string.Join(
+                "|",
+                snapshots.Select(snapshot => $"{snapshot.ConfigGuid}:{snapshot.RuleHash}:{snapshot.ConfigPath}"));
+            var assetPart = string.Join(
+                "|",
+                index.Assets
+                    .OrderBy(asset => asset.assetGuid, StringComparer.OrdinalIgnoreCase)
+                    .Select(asset =>
+                    {
+                        var currentPath = string.IsNullOrEmpty(asset.assetGuid)
+                            ? string.Empty
+                            : AssetDatabase.GUIDToAssetPath(asset.assetGuid);
+                        return $"{asset.assetGuid}:{asset.assetPath}:{AssetFlowPath.Normalize(currentPath)}:{asset.managedByConfigGuid}:{asset.lastProcessedRuleHash}:{asset.lastProcessedTicks}";
+                    }));
+            var validationPart = string.Join(
+                "|",
+                index.ValidationResults
+                    .OrderBy(record => record.assetGuid, StringComparer.OrdinalIgnoreCase)
+                    .ThenBy(record => record.configGuid, StringComparer.OrdinalIgnoreCase)
+                    .Select(record => $"{record.assetGuid}:{record.configGuid}:{record.severity}:{record.message}:{record.ticks}"));
+            return $"{configPart}\n{assetPart}\n{validationPart}";
         }
 
         private static int CountOutOfDate(IEnumerable<string> assetPaths, AssetFlowConfigSnapshot snapshot, AssetFlowIndex index)

@@ -98,8 +98,6 @@ namespace AssetFlow.Editor.UI
         private void Apply(AssetFlowConfig config, AssetFlowConfigSnapshot snapshot)
         {
             var count = AssetFlowApplyService.ApplyToManagedAssets(config);
-            var json = EditorJsonUtility.ToJson(config);
-            appliedStateStore.SaveAppliedSnapshot(snapshot.ConfigGuid, config.ComputeRuleHash(), json);
             EditorUtility.DisplayDialog("AssetFlow", $"Applied workflow to {count} managed assets.", "OK");
         }
 

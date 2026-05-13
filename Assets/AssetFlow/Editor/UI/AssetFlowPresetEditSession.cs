@@ -38,7 +38,7 @@ namespace AssetFlow.Editor.UI
             }
 
             preset.ApplyTo(importer);
-            var editor = UnityEditor.Editor.CreateEditor(importer, AssetFlowImporterEditorTypes.DefaultEditorTypeFor(importer));
+            var editor = UnityEditor.Editor.CreateEditor(importer);
             if (editor == null)
             {
                 AssetFlowPresetUtility.DeleteTemporarySourceAssetForPresetEditing(path);

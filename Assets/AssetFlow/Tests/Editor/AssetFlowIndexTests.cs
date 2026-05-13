@@ -55,6 +55,38 @@ namespace AssetFlow.Editor.Tests
         }
 
         [Test]
+        public void RemoveAsset_RemovesAssetAndValidationResultsByGuid()
+        {
+            var index = new AssetFlowIndex();
+            index.UpsertAsset(new AssetFlowAssetRecord { assetGuid = "asset", assetPath = "Assets/Art/icon.png" });
+            index.ReplaceValidationResults("asset", "config", new[]
+            {
+                new AssetFlowValidationRecord { assetGuid = "asset", configGuid = "config", message = "issue" },
+            });
+
+            index.RemoveAsset("asset");
+
+            Assert.That(index.Assets, Is.Empty);
+            Assert.That(index.ValidationResults, Is.Empty);
+        }
+
+        [Test]
+        public void RemoveAssetAtPath_RemovesAssetAndValidationResultsByPath()
+        {
+            var index = new AssetFlowIndex();
+            index.UpsertAsset(new AssetFlowAssetRecord { assetGuid = "asset", assetPath = @"Assets\Art\icon.png" });
+            index.ReplaceValidationResults("asset", "config", new[]
+            {
+                new AssetFlowValidationRecord { assetGuid = "asset", configGuid = "config", message = "issue" },
+            });
+
+            index.RemoveAssetAtPath("Assets/Art/icon.png");
+
+            Assert.That(index.Assets, Is.Empty);
+            Assert.That(index.ValidationResults, Is.Empty);
+        }
+
+        [Test]
         public void IsOutOfDate_ReturnsTrueWhenManagedAssetHasOldRuleHash()
         {
             var index = new AssetFlowIndex();

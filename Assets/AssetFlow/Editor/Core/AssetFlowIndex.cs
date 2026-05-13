@@ -100,6 +100,33 @@ namespace AssetFlow.Editor.Core
                 data.assets.Add(record);
         }
 
+        public void RemoveAsset(string assetGuid)
+        {
+            if (string.IsNullOrWhiteSpace(assetGuid))
+                return;
+
+            data.assets.RemoveAll(record => string.Equals(record.assetGuid, assetGuid, StringComparison.OrdinalIgnoreCase));
+            data.validationResults.RemoveAll(record => string.Equals(record.assetGuid, assetGuid, StringComparison.OrdinalIgnoreCase));
+        }
+
+        public void RemoveAssetAtPath(string assetPath)
+        {
+            var normalizedPath = AssetFlowPath.Normalize(assetPath);
+            if (string.IsNullOrWhiteSpace(normalizedPath))
+                return;
+
+            var removedGuids = data.assets
+                .Where(record => string.Equals(AssetFlowPath.Normalize(record.assetPath), normalizedPath, StringComparison.OrdinalIgnoreCase))
+                .Select(record => record.assetGuid)
+                .Where(guid => !string.IsNullOrWhiteSpace(guid))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            data.assets.RemoveAll(record => string.Equals(AssetFlowPath.Normalize(record.assetPath), normalizedPath, StringComparison.OrdinalIgnoreCase));
+
+            foreach (var guid in removedGuids)
+                data.validationResults.RemoveAll(record => string.Equals(record.assetGuid, guid, StringComparison.OrdinalIgnoreCase));
+        }
+
         public void ReplaceValidationResults(string assetGuid, string configGuid, IEnumerable<AssetFlowValidationRecord> records)
         {
             data.validationResults.RemoveAll(record => record.assetGuid == assetGuid && record.configGuid == configGuid);

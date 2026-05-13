@@ -2,6 +2,7 @@ using System.IO;
 using System.Linq;
 using AssetFlow.Editor.Core;
 using AssetFlow.Editor.Importing;
+using AssetFlow.Editor.UI;
 using AssetFlow.Editor.Workflow;
 using NUnit.Framework;
 using UnityEditor;
@@ -19,6 +20,7 @@ namespace AssetFlow.Editor.Tests
         private const string TextureNestedFolder = TextureFolder + "/Nested";
         private const string TextureConflictFolder = TextureFolder + "/Conflict";
         private const string IndexPath = "Library/AssetFlow/Index.json";
+        private const string AppliedStatePath = "Library/AssetFlowTests/AppliedState.json";
 
         [SetUp]
         public void SetUp()
@@ -26,6 +28,9 @@ namespace AssetFlow.Editor.Tests
             AssetDatabase.DeleteAsset(TestRoot);
             if (File.Exists(IndexPath))
                 File.Delete(IndexPath);
+            if (File.Exists(AppliedStatePath))
+                File.Delete(AppliedStatePath);
+            AssetFlowApplyService.SetAppliedStateStoreForTests(new AssetFlowAppliedStateStore(AppliedStatePath));
 
             CreateFolder("Assets", "AssetFlowRealResourceIntegrationTests");
             CreateFolder(TestRoot, "Textures");
@@ -42,6 +47,9 @@ namespace AssetFlow.Editor.Tests
             AssetDatabase.DeleteAsset(TestRoot);
             if (File.Exists(IndexPath))
                 File.Delete(IndexPath);
+            if (File.Exists(AppliedStatePath))
+                File.Delete(AppliedStatePath);
+            AssetFlowApplyService.SetAppliedStateStoreForTests(null);
         }
 
         [Test]
@@ -169,6 +177,104 @@ namespace AssetFlow.Editor.Tests
         }
 
         [Test]
+        public void MovingRealTextureOutOfManagedFolder_RemovesAssetFromIndex()
+        {
+            var texturePath = WritePng(TextureFolder + "/move-out.png");
+            AssetFlowConfigFactory.CreateTextureConfig(TextureFolder);
+
+            AssetDatabase.ImportAsset(texturePath, ImportAssetOptions.ForceUpdate);
+            var guid = AssetDatabase.AssetPathToGUID(texturePath);
+            Assert.That(new AssetFlowIndexStore().Load().Assets.Any(asset => asset.assetGuid == guid), Is.True);
+
+            var movedPath = UnmanagedFolder + "/move-out.png";
+            Assert.That(AssetDatabase.MoveAsset(texturePath, movedPath), Is.Empty);
+            AssetDatabase.ImportAsset(movedPath, ImportAssetOptions.ForceUpdate);
+
+            var index = new AssetFlowIndexStore().Load();
+            Assert.That(index.Assets.Any(asset => asset.assetGuid == guid), Is.False);
+            Assert.That(index.ValidationResults.Any(record => record.assetGuid == guid), Is.False);
+        }
+
+        [Test]
+        public void MovingRealTextureIntoUnincludedSubfolder_RemovesAssetFromIndex()
+        {
+            var texturePath = WritePng(TextureFolder + "/move-into-subfolder.png");
+            var configPath = AssetFlowConfigFactory.CreateTextureConfig(TextureFolder);
+            var config = AssetDatabase.LoadAssetAtPath<AssetFlowTextureConfig>(configPath);
+            config.IncludeSubfolders = false;
+            EditorUtility.SetDirty(config);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(configPath);
+
+            AssetDatabase.ImportAsset(texturePath, ImportAssetOptions.ForceUpdate);
+            var guid = AssetDatabase.AssetPathToGUID(texturePath);
+            Assert.That(new AssetFlowIndexStore().Load().Assets.Any(asset => asset.assetGuid == guid), Is.True);
+
+            var movedPath = TextureNestedFolder + "/move-into-subfolder.png";
+            Assert.That(AssetDatabase.MoveAsset(texturePath, movedPath), Is.Empty);
+            AssetDatabase.ImportAsset(movedPath, ImportAssetOptions.ForceUpdate);
+
+            var index = new AssetFlowIndexStore().Load();
+            Assert.That(index.Assets.Any(asset => asset.assetGuid == guid), Is.False);
+            Assert.That(index.ValidationResults.Any(record => record.assetGuid == guid), Is.False);
+        }
+
+        [Test]
+        public void ManagerCacheSignature_ChangesWhenGuidMovesIntoUnincludedSubfolder()
+        {
+            var texturePath = WritePng(TextureFolder + "/stale-manager-cache.png");
+            var configPath = AssetFlowConfigFactory.CreateTextureConfig(TextureFolder);
+            var config = AssetDatabase.LoadAssetAtPath<AssetFlowTextureConfig>(configPath);
+            config.IncludeSubfolders = false;
+            EditorUtility.SetDirty(config);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(configPath);
+
+            AssetDatabase.ImportAsset(texturePath, ImportAssetOptions.ForceUpdate);
+            var guid = AssetDatabase.AssetPathToGUID(texturePath);
+            var snapshot = config.ToSnapshot();
+            var staleIndex = new AssetFlowIndex();
+            staleIndex.UpsertAsset(new AssetFlowAssetRecord
+            {
+                assetGuid = guid,
+                assetPath = texturePath,
+                importerTypeKey = typeof(TextureImporter).FullName,
+                managedByConfigGuid = snapshot.ConfigGuid,
+                managedByConfigPath = snapshot.ConfigPath,
+                lastProcessedRuleHash = snapshot.RuleHash,
+                lastProcessedTicks = 1,
+            });
+
+            var beforeSignature = AssetFlowManagerWindow.BuildCacheSignature(staleIndex, new[] { snapshot });
+            var movedPath = TextureNestedFolder + "/stale-manager-cache.png";
+            Assert.That(AssetDatabase.MoveAsset(texturePath, movedPath), Is.Empty);
+
+            var afterSignature = AssetFlowManagerWindow.BuildCacheSignature(staleIndex, new[] { snapshot });
+            Assert.That(afterSignature, Is.Not.EqualTo(beforeSignature));
+
+            var pathsByConfig = AssetFlowManagerWindow.FindManagedAssetPathsByConfig(staleIndex, new[] { snapshot }, out var cacheNeedsReconcile);
+            Assert.That(pathsByConfig[snapshot.ConfigGuid], Is.Empty);
+            Assert.That(cacheNeedsReconcile, Is.True);
+        }
+
+        [Test]
+        public void DeletingRealManagedTexture_RemovesAssetFromIndex()
+        {
+            var texturePath = WritePng(TextureFolder + "/delete-me.png");
+            AssetFlowConfigFactory.CreateTextureConfig(TextureFolder);
+
+            AssetDatabase.ImportAsset(texturePath, ImportAssetOptions.ForceUpdate);
+            var guid = AssetDatabase.AssetPathToGUID(texturePath);
+            Assert.That(new AssetFlowIndexStore().Load().Assets.Any(asset => asset.assetGuid == guid), Is.True);
+
+            AssetDatabase.DeleteAsset(texturePath);
+
+            var index = new AssetFlowIndexStore().Load();
+            Assert.That(index.Assets.Any(asset => asset.assetGuid == guid), Is.False);
+            Assert.That(index.ValidationResults.Any(record => record.assetGuid == guid), Is.False);
+        }
+
+        [Test]
         public void EditingConfigWithoutApply_MarksRealManagedTextureOutOfDate()
         {
             var texturePath = WritePng(TextureFolder + "/stale.png");
@@ -186,7 +292,58 @@ namespace AssetFlow.Editor.Tests
         }
 
         [Test]
-        public void ConfigurationChange_RemovesDeletedConfigFromIndexWithoutDeletingManagedAssetRecord()
+        public void ConfigurationChange_ReconcilesManagedAssetsForCacheBackedManagerTree()
+        {
+            var nestedTexture = WritePng(TextureNestedFolder + "/from-config-change.png");
+            var configPath = AssetFlowConfigFactory.CreateTextureConfig(TextureFolder);
+            var config = AssetDatabase.LoadAssetAtPath<AssetFlowTextureConfig>(configPath);
+            config.IncludeSubfolders = false;
+            EditorUtility.SetDirty(config);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(configPath);
+            AssetFlowConfigurationChangeProcessor.ProcessConfigurationChanges();
+
+            var guid = AssetDatabase.AssetPathToGUID(nestedTexture);
+            Assert.That(new AssetFlowIndexStore().Load().Assets.Any(asset => asset.assetGuid == guid), Is.False);
+
+            config.IncludeSubfolders = true;
+            EditorUtility.SetDirty(config);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(configPath);
+            AssetFlowConfigurationChangeProcessor.ProcessConfigurationChanges();
+
+            var snapshot = config.ToSnapshot();
+            var index = new AssetFlowIndexStore().Load();
+            var assetRecord = index.Assets.SingleOrDefault(asset => asset.assetGuid == guid);
+            Assert.That(assetRecord, Is.Not.Null);
+            Assert.That(assetRecord.managedByConfigGuid, Is.EqualTo(snapshot.ConfigGuid));
+            Assert.That(assetRecord.assetPath, Is.EqualTo(nestedTexture));
+            Assert.That(index.IsOutOfDate(guid, snapshot.ConfigGuid, snapshot.RuleHash), Is.True);
+        }
+
+        [Test]
+        public void ApplyToManagedAssets_SavesAppliedStateForCurrentConfigSnapshot()
+        {
+            var texturePath = WritePng(TextureFolder + "/applied-state.png");
+            var configPath = AssetFlowConfigFactory.CreateTextureConfig(TextureFolder);
+            var config = AssetDatabase.LoadAssetAtPath<AssetFlowTextureConfig>(configPath);
+
+            config.IncludeSubfolders = !config.IncludeSubfolders;
+            EditorUtility.SetDirty(config);
+            AssetDatabase.SaveAssets();
+
+            Assert.That(AssetFlowApplyService.ApplyToManagedAssets(config), Is.EqualTo(1));
+
+            var snapshot = config.ToSnapshot();
+            var applied = new AssetFlowAppliedStateStore(AppliedStatePath).Find(snapshot.ConfigGuid);
+            Assert.That(applied, Is.Not.Null);
+            Assert.That(applied.ruleHash, Is.EqualTo(snapshot.RuleHash));
+            Assert.That(applied.snapshotJson, Does.Contain("includeSubfolders"));
+            Assert.That(AssetDatabase.AssetPathToGUID(texturePath), Is.Not.Empty);
+        }
+
+        [Test]
+        public void ConfigurationChange_RemovesDeletedConfigAndFormerManagedAssetsFromIndex()
         {
             var texturePath = WritePng(TextureFolder + "/tracked.png");
             var configPath = AssetFlowConfigFactory.CreateTextureConfig(TextureFolder);
@@ -203,7 +360,7 @@ namespace AssetFlow.Editor.Tests
 
             var indexAfterDelete = new AssetFlowIndexStore().Load();
             Assert.That(indexAfterDelete.Configs.Any(record => record.configGuid == configGuid), Is.False);
-            Assert.That(indexAfterDelete.Assets.Any(record => record.assetGuid == AssetDatabase.AssetPathToGUID(texturePath)), Is.True);
+            Assert.That(indexAfterDelete.Assets.Any(record => record.assetGuid == AssetDatabase.AssetPathToGUID(texturePath)), Is.False);
         }
 
         private static TConfig CreateAndCapture<TConfig>(

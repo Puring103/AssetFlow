@@ -10,7 +10,7 @@ namespace AssetFlow.Editor.Importing
 {
     public static class AssetFlowPresetUtility
     {
-        private const string TemporaryAssetFolder = "Assets/AssetFlow/Editor/TemporaryPresetSources";
+        public const string TemporaryAssetFolder = "Assets/AssetFlow/Editor/TemporaryPresetSources";
         private static readonly object TemporaryAssetFolderLock = new object();
 
         public static bool EnsurePreset(AssetFlowConfig config, IAssetFlowPresetProcessor processor)

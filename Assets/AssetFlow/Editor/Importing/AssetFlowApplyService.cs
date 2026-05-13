@@ -25,6 +25,8 @@ namespace AssetFlow.Editor.Importing
 
     public static class AssetFlowApplyService
     {
+        private static AssetFlowAppliedStateStore appliedStateStore = new AssetFlowAppliedStateStore();
+
         public readonly struct AssetFlowManagedStats
         {
             public AssetFlowManagedStats(int managedCount, int outOfDateCount)
@@ -80,6 +82,10 @@ namespace AssetFlow.Editor.Importing
             }
 
             AssetDatabase.SaveAssets();
+            appliedStateStore.SaveAppliedSnapshot(
+                snapshot.ConfigGuid,
+                snapshot.RuleHash,
+                EditorJsonUtility.ToJson(config));
             return paths.Count;
         }
 
@@ -128,6 +134,11 @@ namespace AssetFlow.Editor.Importing
             var configs = AssetFlowConfigScanner.FindConfigSnapshots();
             var candidates = FindImporterCandidates(snapshot.TypeKey);
             return FindManagedAssetsForConfig(snapshot, configs, candidates);
+        }
+
+        internal static void SetAppliedStateStoreForTests(AssetFlowAppliedStateStore store)
+        {
+            appliedStateStore = store ?? new AssetFlowAppliedStateStore();
         }
 
         private static IEnumerable<AssetFlowApplyCandidate> FindImporterCandidates(string typeKey)

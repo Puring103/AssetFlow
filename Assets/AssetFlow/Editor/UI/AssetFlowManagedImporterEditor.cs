@@ -1,6 +1,5 @@
 using AssetFlow.Editor.Core;
 using AssetFlow.Editor.Importing;
-using System;
 using UnityEditor;
 using UnityEditor.AssetImporters;
 
@@ -85,7 +84,9 @@ namespace AssetFlow.Editor.UI
         private static bool IsManaged(AssetImporter importer)
         {
             var path = importer.assetPath;
-            if (string.IsNullOrEmpty(path) || path.IndexOf("/AssetFlow.", System.StringComparison.OrdinalIgnoreCase) >= 0)
+            if (string.IsNullOrEmpty(path)
+                || path.IndexOf("/AssetFlow.", System.StringComparison.OrdinalIgnoreCase) >= 0
+                || path.StartsWith(AssetFlowPresetUtility.TemporaryAssetFolder + "/", System.StringComparison.OrdinalIgnoreCase))
                 return false;
 
             var resolver = new AssetFlowResolver(AssetFlowConfigScanner.FindConfigSnapshots());
@@ -112,18 +113,4 @@ namespace AssetFlow.Editor.UI
         }
     }
 
-    internal static class AssetFlowImporterEditorTypes
-    {
-        public static Type DefaultEditorTypeFor(UnityEngine.Object editorTarget)
-        {
-            if (editorTarget is TextureImporter)
-                return typeof(UnityEditor.Editor).Assembly.GetType("UnityEditor.TextureImporterInspector");
-            if (editorTarget is ModelImporter)
-                return typeof(UnityEditor.Editor).Assembly.GetType("UnityEditor.ModelImporterEditor");
-            if (editorTarget is AudioImporter)
-                return typeof(UnityEditor.Editor).Assembly.GetType("UnityEditor.AudioImporterInspector");
-
-            return null;
-        }
-    }
 }
