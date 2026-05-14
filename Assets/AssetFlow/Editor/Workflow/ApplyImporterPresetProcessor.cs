@@ -1,39 +1,69 @@
 using UnityEditor;
+using UnityEditor.Presets;
 using UnityEngine;
 
 namespace AssetFlow.Editor.Workflow
 {
     public interface IAssetFlowImporterTemplateProcessor
     {
-        AssetImporter TemplateImporter { get; }
+        Preset TemplatePreset { get; }
 
-        void SetTemplateImporter(AssetImporter value);
+        AssetImporter LegacyTemplateImporter { get; }
+
+        void SetTemplatePreset(Preset value);
+
+        void ClearLegacyTemplateImporter();
     }
 
     public abstract class ApplyImporterPresetProcessor<TImporter> : AssetFlowPreImportProcessor<TImporter>, IAssetFlowImporterTemplateProcessor
         where TImporter : AssetImporter
     {
+        [SerializeField] private Preset preset;
         [SerializeField] private AssetImporter templateImporter;
         [SerializeField] private string versionSalt;
 
-        public AssetImporter TemplateImporter => templateImporter;
+        public Preset TemplatePreset => preset;
 
-        public void SetTemplateImporter(AssetImporter value)
+        public AssetImporter LegacyTemplateImporter => templateImporter;
+
+        public void SetTemplatePreset(Preset value)
         {
-            templateImporter = value;
+            preset = value;
+            templateImporter = null;
+        }
+
+        public void ClearLegacyTemplateImporter()
+        {
+            templateImporter = null;
         }
 
         public override string RuleHashPayload
         {
             get
             {
-                var templatePayload = templateImporter == null ? string.Empty : EditorJsonUtility.ToJson(templateImporter);
+                var templatePayload = preset != null
+                    ? EditorJsonUtility.ToJson(preset)
+                    : templateImporter == null
+                        ? string.Empty
+                        : EditorJsonUtility.ToJson(templateImporter);
                 return $"{base.RuleHashPayload}|template:{templatePayload}|salt:{versionSalt}";
             }
         }
 
         public override void Process(TImporter importer, AssetFlowPreImportContext context)
         {
+            if (preset != null)
+            {
+                if (!preset.CanBeAppliedTo(importer))
+                {
+                    context.ReportError("Template preset is incompatible with target importer.");
+                    return;
+                }
+
+                preset.ApplyTo(importer);
+                return;
+            }
+
             if (templateImporter == null)
                 return;
 

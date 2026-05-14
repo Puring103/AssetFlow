@@ -9,6 +9,8 @@ namespace AssetFlow.Editor.Workflow
     {
         public virtual int Version => 1;
 
+        public virtual string Summary => ObjectNames.NicifyVariableName(GetType().Name);
+
         public virtual string RuleHashPayload
         {
             get

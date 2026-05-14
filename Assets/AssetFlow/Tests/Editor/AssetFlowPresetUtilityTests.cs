@@ -3,6 +3,7 @@ using AssetFlow.Editor.Importing;
 using AssetFlow.Editor.Workflow;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.Presets;
 using UnityEngine;
 
 namespace AssetFlow.Editor.Tests
@@ -25,7 +26,7 @@ namespace AssetFlow.Editor.Tests
         }
 
         [Test]
-        public void CaptureFromAsset_AssignsTemplateImporterOnTemplateProcessor()
+        public void CaptureFromAsset_AssignsPresetSubAssetOnTemplateProcessor()
         {
             var texture = new Texture2D(2, 2);
             var texturePath = $"{TestFolder}/sample.png";
@@ -39,12 +40,13 @@ namespace AssetFlow.Editor.Tests
             Assert.That(AssetFlowPresetUtility.CaptureFromAsset(config, texturePath), Is.True);
 
             var processor = (ApplyTextureImporterPresetProcessor)config.PreImportProcessors[0];
-            Assert.That(processor.TemplateImporter, Is.SameAs(AssetImporter.GetAtPath(texturePath)));
-            Assert.That(AssetDatabase.LoadAllAssetsAtPath(configPath), Has.None.SameAs(processor.TemplateImporter));
+            Assert.That(processor.TemplatePreset, Is.Not.Null);
+            Assert.That(processor.TemplatePreset.name, Is.EqualTo("importor"));
+            Assert.That(AssetDatabase.LoadAllAssetsAtPath(configPath), Has.Some.SameAs(processor.TemplatePreset));
         }
 
         [Test]
-        public void CaptureFromAsset_ReplacesExistingTemplateImporterReference()
+        public void CaptureFromAsset_ReusesExistingPresetSubAsset()
         {
             var firstTexture = new Texture2D(2, 2);
             var firstTexturePath = $"{TestFolder}/first.png";
@@ -62,46 +64,54 @@ namespace AssetFlow.Editor.Tests
             var config = AssetDatabase.LoadAssetAtPath<AssetFlowTextureConfig>(configPath);
             Assert.That(AssetFlowPresetUtility.CaptureFromAsset(config, firstTexturePath), Is.True);
             var processor = (ApplyTextureImporterPresetProcessor)config.PreImportProcessors[0];
-            var firstImporter = processor.TemplateImporter;
+            var firstPreset = processor.TemplatePreset;
 
             Assert.That(AssetFlowPresetUtility.CaptureFromAsset(config, secondTexturePath), Is.True);
 
-            Assert.That(processor.TemplateImporter, Is.Not.Null);
-            Assert.That(processor.TemplateImporter, Is.Not.SameAs(firstImporter));
-            Assert.That(processor.TemplateImporter, Is.SameAs(AssetImporter.GetAtPath(secondTexturePath)));
+            Assert.That(processor.TemplatePreset, Is.Not.Null);
+            Assert.That(processor.TemplatePreset, Is.SameAs(firstPreset));
+            Assert.That(AssetDatabase.LoadAllAssetsAtPath(configPath), Has.Some.SameAs(firstPreset));
         }
 
         [Test]
-        public void CreateTextureConfig_CreatesDefaultTemplateProcessorWithAutoTemplateImporter()
+        public void CreateTextureConfig_DoesNotCreateAutoTemplateAssetOrPreset()
         {
             var configPath = AssetFlowConfigFactory.CreateTextureConfig(TestFolder);
             var config = AssetDatabase.LoadAssetAtPath<AssetFlowTextureConfig>(configPath);
             var processor = (ApplyTextureImporterPresetProcessor)config.PreImportProcessors[0];
 
-            Assert.That(processor.TemplateImporter, Is.Not.Null);
-            Assert.That(processor.TemplateImporter, Is.TypeOf<TextureImporter>());
-            Assert.That(processor.TemplateImporter.assetPath, Is.EqualTo($"{TestFolder}/AssetFlow.Template.Texture.png"));
-            Assert.That(AssetDatabase.LoadAllAssetsAtPath(configPath), Has.Some.SameAs(processor));
+            Assert.That(processor.TemplatePreset, Is.Null);
+            Assert.That(AssetDatabase.LoadAllAssetsAtPath(configPath), Has.None.TypeOf<Preset>());
+            Assert.That(AssetDatabase.LoadAssetAtPath<Texture2D>($"{TestFolder}/AssetFlow.Template.Texture.png"), Is.Null);
         }
 
         [Test]
-        public void EnsureTemplateImporter_RecreatesMissingAutoTemplateImporter()
+        public void EnsureTemplateImporter_MigratesLegacyTemplateImporterToPresetSubAsset()
         {
+            var texture = new Texture2D(2, 2);
+            var texturePath = $"{TestFolder}/legacy.png";
+            File.WriteAllBytes(texturePath, texture.EncodeToPNG());
+            Object.DestroyImmediate(texture);
+            AssetDatabase.ImportAsset(texturePath);
+
             var configPath = AssetFlowConfigFactory.CreateTextureConfig(TestFolder);
             var config = AssetDatabase.LoadAssetAtPath<AssetFlowTextureConfig>(configPath);
             var processor = (ApplyTextureImporterPresetProcessor)config.PreImportProcessors[0];
-            var templatePath = processor.TemplateImporter.assetPath;
+            var legacyImporter = AssetImporter.GetAtPath(texturePath);
 
-            Assert.That(AssetDatabase.DeleteAsset(templatePath), Is.True);
+            processor.SetTemplatePreset(null);
+            var field = typeof(ApplyTextureImporterPresetProcessor).BaseType?.GetField("templateImporter", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+            field?.SetValue(processor, legacyImporter);
+
             Assert.That(AssetFlowPresetUtility.EnsureTemplateImporter(config), Is.True);
-
-            Assert.That(processor.TemplateImporter, Is.Not.Null);
-            Assert.That(processor.TemplateImporter.assetPath, Is.EqualTo(templatePath));
-            Assert.That(AssetDatabase.LoadAssetAtPath<Texture2D>(templatePath), Is.Not.Null);
+            Assert.That(processor.TemplatePreset, Is.Not.Null);
+            Assert.That(processor.LegacyTemplateImporter, Is.Null);
+            Assert.That(processor.TemplatePreset.name, Is.EqualTo("importor"));
+            Assert.That(AssetDatabase.LoadAllAssetsAtPath(configPath), Has.Some.SameAs(processor.TemplatePreset));
         }
 
         [Test]
-        public void ClearPreset_RemovesTemplateImporterReference()
+        public void ClearPreset_RemovesTemplatePresetReferenceAndSubAsset()
         {
             var texture = new Texture2D(2, 2);
             var texturePath = $"{TestFolder}/clear.png";
@@ -113,10 +123,12 @@ namespace AssetFlow.Editor.Tests
             var config = AssetDatabase.LoadAssetAtPath<AssetFlowTextureConfig>(configPath);
             AssetFlowPresetUtility.CaptureFromAsset(config, texturePath);
             var processor = (ApplyTextureImporterPresetProcessor)config.PreImportProcessors[0];
+            var preset = processor.TemplatePreset;
 
             Assert.That(AssetFlowPresetUtility.ClearPreset(config), Is.True);
 
-            Assert.That(processor.TemplateImporter, Is.Null);
+            Assert.That(processor.TemplatePreset, Is.Null);
+            Assert.That(AssetDatabase.LoadAllAssetsAtPath(configPath), Has.None.SameAs(preset));
         }
     }
 }

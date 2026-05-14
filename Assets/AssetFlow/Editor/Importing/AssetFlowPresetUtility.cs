@@ -1,49 +1,41 @@
-using System.IO;
 using System.Linq;
-using AssetFlow.Editor.Core;
 using AssetFlow.Editor.Workflow;
 using UnityEditor;
+using UnityEditor.Presets;
 using UnityEngine;
 
 namespace AssetFlow.Editor.Importing
 {
     public static class AssetFlowPresetUtility
     {
+        private const string PresetSubAssetName = "importor";
         private const string LegacyPresetTypeName = "UnityEditor.Presets.Preset";
 
         public static bool EnsureTemplateImporter(AssetFlowConfig config)
         {
-            var processor = config == null
-                ? null
-                : config.PreImportProcessors.OfType<IAssetFlowImporterTemplateProcessor>().FirstOrDefault();
+            var processor = GetTemplateProcessor(config);
             if (processor == null)
                 return false;
 
-            if (IsCompatibleTemplateImporter(config, processor.TemplateImporter))
+            var configPath = AssetDatabase.GetAssetPath(config);
+            if (string.IsNullOrEmpty(configPath))
                 return false;
 
-            var templatePath = GetTemplateAssetPath(config);
-            if (string.IsNullOrEmpty(templatePath))
-                return false;
-
-            var importer = AssetImporter.GetAtPath(templatePath);
-            if (importer == null)
+            if (processor.TemplatePreset != null && AssetDatabase.Contains(processor.TemplatePreset))
             {
-                if (!CreateTemplateSourceAsset(config.TypeKey, templatePath))
-                    return false;
-
-                AssetDatabase.ImportAsset(templatePath, ImportAssetOptions.ForceUpdate);
-                importer = AssetImporter.GetAtPath(templatePath);
+                EnsurePresetNaming(processor.TemplatePreset);
+                RemoveLegacyPresetSubAssets(configPath, processor.TemplatePreset);
+                return false;
             }
 
-            if (importer == null || importer.GetType().FullName != config.TypeKey)
+            if (TryMigrateLegacyTemplateImporter(config, processor))
+                return true;
+
+            var existingPreset = FindExistingPreset(configPath);
+            if (existingPreset == null)
                 return false;
 
-            var configPath = AssetDatabase.GetAssetPath(config);
-            if (!string.IsNullOrEmpty(configPath))
-                RemoveLegacyPresetSubAssets(configPath);
-
-            processor.SetTemplateImporter(importer);
+            processor.SetTemplatePreset(existingPreset);
             EditorUtility.SetDirty((Object)processor);
             EditorUtility.SetDirty(config);
             AssetDatabase.SaveAssets();
@@ -59,7 +51,7 @@ namespace AssetFlow.Editor.Importing
             if (importer == null || importer.GetType().FullName != config.TypeKey)
                 return false;
 
-            var processor = config.PreImportProcessors.OfType<IAssetFlowImporterTemplateProcessor>().FirstOrDefault();
+            var processor = GetTemplateProcessor(config);
             if (processor == null)
                 return false;
 
@@ -67,9 +59,26 @@ namespace AssetFlow.Editor.Importing
             if (string.IsNullOrEmpty(configPath))
                 return false;
 
-            RemoveLegacyPresetSubAssets(configPath);
-            processor.SetTemplateImporter(importer);
-            EditorUtility.SetDirty((UnityEngine.Object)processor);
+            var preset = processor.TemplatePreset;
+            if (preset == null)
+            {
+                preset = new Preset(importer)
+                {
+                    name = PresetSubAssetName
+                };
+                AssetDatabase.AddObjectToAsset(preset, config);
+            }
+            else
+            {
+                preset.UpdateProperties(importer);
+                EnsurePresetNaming(preset);
+            }
+
+            RemoveLegacyPresetSubAssets(configPath, preset);
+            processor.SetTemplatePreset(preset);
+            processor.ClearLegacyTemplateImporter();
+            EditorUtility.SetDirty(preset);
+            EditorUtility.SetDirty((Object)processor);
             EditorUtility.SetDirty(config);
             AssetDatabase.SaveAssets();
             AssetDatabase.ImportAsset(configPath);
@@ -78,13 +87,27 @@ namespace AssetFlow.Editor.Importing
 
         public static bool ClearPreset(AssetFlowConfig config)
         {
-            var processor = config == null
-                ? null
-                : config.PreImportProcessors.OfType<IAssetFlowImporterTemplateProcessor>().FirstOrDefault();
-            if (processor == null || processor.TemplateImporter == null)
+            var processor = GetTemplateProcessor(config);
+            if (processor == null)
                 return false;
 
-            processor.SetTemplateImporter(null);
+            var changed = false;
+            if (processor.TemplatePreset != null)
+            {
+                RemovePresetSubAsset(processor.TemplatePreset);
+                processor.SetTemplatePreset(null);
+                changed = true;
+            }
+
+            if (processor.LegacyTemplateImporter != null)
+            {
+                processor.ClearLegacyTemplateImporter();
+                changed = true;
+            }
+
+            if (!changed)
+                return false;
+
             EditorUtility.SetDirty((Object)processor);
             EditorUtility.SetDirty(config);
             AssetDatabase.SaveAssets();
@@ -97,19 +120,23 @@ namespace AssetFlow.Editor.Importing
             if (string.IsNullOrEmpty(configPath))
                 return false;
 
-            return RemoveLegacyPresetSubAssets(configPath);
+            return RemoveLegacyPresetSubAssets(configPath, null);
         }
 
         public static bool PingPreset(AssetFlowConfig config)
         {
-            var importer = config?.PreImportProcessors.OfType<IAssetFlowImporterTemplateProcessor>().FirstOrDefault()?.TemplateImporter;
-            if (importer == null)
+            var preset = GetTemplateProcessor(config)?.TemplatePreset;
+            if (preset == null)
                 return false;
 
-            var asset = AssetDatabase.LoadMainAssetAtPath(importer.assetPath);
-            Selection.activeObject = asset;
-            EditorGUIUtility.PingObject(asset);
+            Selection.activeObject = preset;
+            EditorGUIUtility.PingObject(preset);
             return true;
+        }
+
+        public static bool HasTemplatePreset(AssetFlowConfig config)
+        {
+            return GetTemplateProcessor(config)?.TemplatePreset != null;
         }
 
         public static bool IsTemplateSourceAsset(string path)
@@ -118,120 +145,98 @@ namespace AssetFlow.Editor.Importing
                    && path.IndexOf("/AssetFlow.Template.", System.StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
-        private static bool RemoveLegacyPresetSubAssets(string configPath)
+        public static Preset GetTemplatePreset(AssetFlowConfig config)
+        {
+            return GetTemplateProcessor(config)?.TemplatePreset;
+        }
+
+        private static IAssetFlowImporterTemplateProcessor GetTemplateProcessor(AssetFlowConfig config)
+        {
+            return config?.PreImportProcessors.OfType<IAssetFlowImporterTemplateProcessor>().FirstOrDefault();
+        }
+
+        private static bool TryMigrateLegacyTemplateImporter(AssetFlowConfig config, IAssetFlowImporterTemplateProcessor processor)
+        {
+            var importer = processor.LegacyTemplateImporter;
+            if (config == null || importer == null || importer.GetType().FullName != config.TypeKey)
+                return false;
+
+            var configPath = AssetDatabase.GetAssetPath(config);
+            if (string.IsNullOrEmpty(configPath))
+                return false;
+
+            var preset = new Preset(importer)
+            {
+                name = PresetSubAssetName
+            };
+            AssetDatabase.AddObjectToAsset(preset, config);
+            RemoveLegacyPresetSubAssets(configPath, preset);
+            processor.SetTemplatePreset(preset);
+            processor.ClearLegacyTemplateImporter();
+            EditorUtility.SetDirty(preset);
+            EditorUtility.SetDirty((Object)processor);
+            EditorUtility.SetDirty(config);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.ImportAsset(configPath);
+            return true;
+        }
+
+        private static Preset FindExistingPreset(string configPath)
+        {
+            return AssetDatabase.LoadAllAssetsAtPath(configPath)
+                .OfType<Preset>()
+                .FirstOrDefault();
+        }
+
+        private static void EnsurePresetNaming(Preset preset)
+        {
+            if (preset == null || preset.name == PresetSubAssetName)
+                return;
+
+            preset.name = PresetSubAssetName;
+            EditorUtility.SetDirty(preset);
+        }
+
+        private static void RemovePresetSubAsset(Preset preset)
+        {
+            if (preset == null)
+                return;
+
+            if (AssetDatabase.Contains(preset))
+                Object.DestroyImmediate(preset, allowDestroyingAssets: true);
+            else
+                Object.DestroyImmediate(preset);
+        }
+
+        private static bool RemoveLegacyPresetSubAssets(string configPath, Preset keepPreset)
         {
             var changed = false;
             foreach (var asset in AssetDatabase.LoadAllAssetsAtPath(configPath))
             {
-                if (asset == null || !AssetDatabase.IsSubAsset(asset) || asset.GetType().FullName != LegacyPresetTypeName)
+                if (asset == null || !AssetDatabase.IsSubAsset(asset))
+                    continue;
+
+                if (asset == keepPreset)
+                    continue;
+
+                if (asset is Preset preset)
+                {
+                    Object.DestroyImmediate(preset, allowDestroyingAssets: true);
+                    changed = true;
+                    continue;
+                }
+
+                if (asset.GetType().FullName != LegacyPresetTypeName)
                     continue;
 
                 Object.DestroyImmediate(asset, allowDestroyingAssets: true);
                 changed = true;
             }
 
-            if (!changed)
-                return false;
+            if (changed)
+                AssetDatabase.SaveAssets();
 
-            AssetDatabase.SaveAssets();
-            return true;
-        }
-
-        private static bool IsCompatibleTemplateImporter(AssetFlowConfig config, AssetImporter importer)
-        {
-            return config != null
-                   && importer != null
-                   && importer.GetType().FullName == config.TypeKey
-                   && !string.IsNullOrEmpty(importer.assetPath)
-                   && AssetDatabase.LoadMainAssetAtPath(importer.assetPath) != null;
-        }
-
-        private static string GetTemplateAssetPath(AssetFlowConfig config)
-        {
-            var configPath = config == null ? string.Empty : AssetDatabase.GetAssetPath(config);
-            if (string.IsNullOrEmpty(configPath))
-                return string.Empty;
-
-            var folder = AssetFlowPath.GetParentFolder(configPath);
-            if (config.TypeKey == typeof(TextureImporter).FullName)
-                return $"{folder}/AssetFlow.Template.Texture.png";
-            if (config.TypeKey == typeof(ModelImporter).FullName)
-                return $"{folder}/AssetFlow.Template.Model.obj";
-            if (config.TypeKey == typeof(AudioImporter).FullName)
-                return $"{folder}/AssetFlow.Template.Audio.wav";
-
-            return string.Empty;
-        }
-
-        private static bool CreateTemplateSourceAsset(string typeKey, string path)
-        {
-            var absolutePath = Path.GetFullPath(path);
-            var directory = Path.GetDirectoryName(absolutePath);
-            if (string.IsNullOrEmpty(directory))
-                return false;
-
-            Directory.CreateDirectory(directory);
-            if (typeKey == typeof(TextureImporter).FullName)
-            {
-                var texture = new Texture2D(1, 1);
-                texture.SetPixel(0, 0, Color.white);
-                texture.Apply();
-                File.WriteAllBytes(absolutePath, texture.EncodeToPNG());
-                Object.DestroyImmediate(texture);
-                return true;
-            }
-
-            if (typeKey == typeof(ModelImporter).FullName)
-            {
-                File.WriteAllText(
-                    absolutePath,
-                    "o AssetFlowTemplate\n" +
-                    "v 0 0 0\n" +
-                    "v 1 0 0\n" +
-                    "v 0 1 0\n" +
-                    "vn 0 0 1\n" +
-                    "vt 0 0\n" +
-                    "vt 1 0\n" +
-                    "vt 0 1\n" +
-                    "f 1/1/1 2/2/1 3/3/1\n");
-                return true;
-            }
-
-            if (typeKey == typeof(AudioImporter).FullName)
-            {
-                File.WriteAllBytes(absolutePath, CreateSilentWavBytes());
-                return true;
-            }
-
-            return false;
-        }
-
-        private static byte[] CreateSilentWavBytes()
-        {
-            const int sampleRate = 44100;
-            const short channels = 1;
-            const short bitsPerSample = 16;
-            const int sampleCount = 1;
-            const int dataSize = sampleCount * channels * bitsPerSample / 8;
-            using (var stream = new MemoryStream())
-            using (var writer = new BinaryWriter(stream))
-            {
-                writer.Write(new[] { 'R', 'I', 'F', 'F' });
-                writer.Write(36 + dataSize);
-                writer.Write(new[] { 'W', 'A', 'V', 'E' });
-                writer.Write(new[] { 'f', 'm', 't', ' ' });
-                writer.Write(16);
-                writer.Write((short)1);
-                writer.Write(channels);
-                writer.Write(sampleRate);
-                writer.Write(sampleRate * channels * bitsPerSample / 8);
-                writer.Write((short)(channels * bitsPerSample / 8));
-                writer.Write(bitsPerSample);
-                writer.Write(new[] { 'd', 'a', 't', 'a' });
-                writer.Write(dataSize);
-                writer.Write((short)0);
-                return stream.ToArray();
-            }
+            return changed;
         }
     }
 }

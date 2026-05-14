@@ -1,6 +1,6 @@
 %YAML 1.1
 %TAG !u! tag:unity3d.com,2011:
---- !u!114 &-6263009120710716519
+--- !u!114 &-595813088715435084
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_CorrespondingSourceObject: {fileID: 0}
@@ -9,8 +9,8 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 8fd800034bef87540965a98b00066d1b, type: 3}
-  m_Name: ApplyAudioImporterPresetProcessor
+  m_Script: {fileID: 11500000, guid: be877b553092ee24494adfb24da22b9f, type: 3}
+  m_Name: ApplyTextureImporterPresetProcessor
   m_EditorClassIdentifier: 
   preset: {fileID: 0}
   templateImporter: {fileID: 0}
@@ -24,11 +24,11 @@ MonoBehaviour:
   m_GameObject: {fileID: 0}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 16ce352a25857704aa46c8996928bb09, type: 3}
-  m_Name: AssetFlow.Audio
+  m_Script: {fileID: 11500000, guid: 6580628688c19204aa842a63725016ee, type: 3}
+  m_Name: AssetFlow.Texture
   m_EditorClassIdentifier: 
-  includeSubfolders: 1
+  includeSubfolders: 0
   preImportProcessors:
-  - {fileID: -6263009120710716519}
+  - {fileID: -595813088715435084}
   postImportProcessors: []
   validators: []
