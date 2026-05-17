@@ -16,6 +16,7 @@ namespace AssetFlow.Editor.UI
         private AssetFlowAppliedConfigRecord cachedApplied;
         private bool hasCachedSnapshot;
         private double nextStatsRefreshTime;
+        private bool restoringSelection;
 
         private void OnEnable()
         {
@@ -33,6 +34,7 @@ namespace AssetFlow.Editor.UI
             hasCachedSnapshot = true;
             var applied = cachedApplied;
             var hasUnappliedChanges = applied == null || applied.ruleHash != snapshot.RuleHash;
+            var canApply = hasUnappliedChanges || outOfDateCount > 0;
             var changed = panelDrawer.Draw(
                 config,
                 serializedObject,
@@ -41,7 +43,7 @@ namespace AssetFlow.Editor.UI
                 managedCount,
                 outOfDateCount,
                 0,
-                hasUnappliedChanges,
+                canApply,
                 () =>
                 {
                     Apply(config, snapshot);
@@ -63,7 +65,7 @@ namespace AssetFlow.Editor.UI
         {
             panelDrawer?.Dispose();
 
-            if (target == null || appliedStateStore == null)
+            if (target == null || appliedStateStore == null || restoringSelection)
                 return;
 
             var config = (AssetFlowConfig)target;
@@ -91,7 +93,17 @@ namespace AssetFlow.Editor.UI
             }
             else if (choice == 2)
             {
-                Selection.activeObject = config;
+                restoringSelection = true;
+                EditorApplication.delayCall += () =>
+                {
+                    if (config != null)
+                    {
+                        Selection.activeObject = config;
+                        EditorGUIUtility.PingObject(config);
+                    }
+
+                    restoringSelection = false;
+                };
             }
         }
 

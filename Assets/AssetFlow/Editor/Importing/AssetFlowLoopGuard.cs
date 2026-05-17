@@ -74,14 +74,90 @@ namespace AssetFlow.Editor.Importing
         }
     }
 
-    public sealed class AssetFlowLoopGuard
+    public interface ILoopGuardPauseStore
+    {
+        bool IsPaused(AssetFlowLoopKey key);
+
+        IReadOnlyList<AssetFlowLoopKey> GetPausedKeysForAsset(string assetGuid);
+
+        void Pause(AssetFlowLoopKey key);
+
+        void Retry(AssetFlowLoopKey key);
+    }
+
+    public sealed class AssetFlowSessionLoopGuardPauseStore : ILoopGuardPauseStore
     {
         private const string SessionPrefix = "AssetFlow.LoopPaused.";
+
+        public bool IsPaused(AssetFlowLoopKey key)
+        {
+            return SessionState.GetBool(SessionPrefix + key, false);
+        }
+
+        public IReadOnlyList<AssetFlowLoopKey> GetPausedKeysForAsset(string assetGuid)
+        {
+            var result = new List<AssetFlowLoopKey>();
+            var sessionKeys = SessionState.GetString(AssetSessionListKey(assetGuid), string.Empty)
+                .Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
+            foreach (var serializedKey in sessionKeys)
+            {
+                if (!AssetFlowLoopKey.TryParse(serializedKey, out var key) || !IsPaused(key) || result.Contains(key))
+                    continue;
+
+                result.Add(key);
+            }
+
+            return result;
+        }
+
+        public void Pause(AssetFlowLoopKey key)
+        {
+            SessionState.SetBool(SessionPrefix + key, true);
+            AddSessionKeyForAsset(key);
+        }
+
+        public void Retry(AssetFlowLoopKey key)
+        {
+            SessionState.EraseBool(SessionPrefix + key);
+            RemoveSessionKeyForAsset(key);
+        }
+
+        private static string AssetSessionListKey(string assetGuid)
+        {
+            return SessionPrefix + (assetGuid ?? string.Empty);
+        }
+
+        private static void AddSessionKeyForAsset(AssetFlowLoopKey key)
+        {
+            var listKey = AssetSessionListKey(key.AssetGuid);
+            var keys = new HashSet<string>(
+                SessionState.GetString(listKey, string.Empty).Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries),
+                StringComparer.Ordinal);
+            keys.Add(key.ToString());
+            SessionState.SetString(listKey, string.Join("\n", keys));
+        }
+
+        private static void RemoveSessionKeyForAsset(AssetFlowLoopKey key)
+        {
+            var listKey = AssetSessionListKey(key.AssetGuid);
+            var keys = new List<string>(
+                SessionState.GetString(listKey, string.Empty).Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries));
+            keys.RemoveAll(value => string.Equals(value, key.ToString(), StringComparison.Ordinal));
+
+            if (keys.Count == 0)
+                SessionState.EraseString(listKey);
+            else
+                SessionState.SetString(listKey, string.Join("\n", keys));
+        }
+    }
+
+    public sealed class AssetFlowLoopGuard
+    {
         private readonly Dictionary<string, int> chainCounts = new Dictionary<string, int>();
         private readonly Dictionary<AssetFlowLoopKey, List<DateTime>> rollingCounts = new Dictionary<AssetFlowLoopKey, List<DateTime>>();
         private readonly HashSet<AssetFlowLoopKey> pausedInMemory = new HashSet<AssetFlowLoopKey>();
         private readonly int threshold;
-        private readonly bool useSessionState;
+        private readonly ILoopGuardPauseStore pauseStore;
         private readonly TimeSpan rollingWindow;
         private readonly Func<DateTime> clock;
 
@@ -89,10 +165,11 @@ namespace AssetFlow.Editor.Importing
             int threshold = 3,
             bool useSessionState = false,
             TimeSpan? rollingWindow = null,
-            Func<DateTime> clock = null)
+            Func<DateTime> clock = null,
+            ILoopGuardPauseStore pauseStore = null)
         {
             this.threshold = Math.Max(1, threshold);
-            this.useSessionState = useSessionState;
+            this.pauseStore = pauseStore ?? (useSessionState ? new AssetFlowSessionLoopGuardPauseStore() : null);
             this.rollingWindow = rollingWindow ?? TimeSpan.FromSeconds(10);
             this.clock = clock ?? (() => DateTime.UtcNow);
         }
@@ -138,10 +215,12 @@ namespace AssetFlow.Editor.Importing
 
         public bool IsPaused(AssetFlowLoopKey key)
         {
-            if (pausedInMemory.Contains(key))
+            if (pauseStore != null && !pauseStore.IsPaused(key))
+                pausedInMemory.Remove(key);
+            else if (pausedInMemory.Contains(key))
                 return true;
 
-            return useSessionState && SessionState.GetBool(SessionPrefix + key, false);
+            return pauseStore?.IsPaused(key) == true;
         }
 
         public IReadOnlyList<AssetFlowLoopKey> GetPausedKeysForAsset(string assetGuid)
@@ -154,14 +233,12 @@ namespace AssetFlow.Editor.Importing
                     result.Add(key);
             }
 
-            if (!useSessionState)
+            if (pauseStore == null)
                 return result;
 
-            var sessionKeys = SessionState.GetString(SessionPrefix + normalizedAssetGuid, string.Empty)
-                .Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries);
-            foreach (var serializedKey in sessionKeys)
+            foreach (var key in pauseStore.GetPausedKeysForAsset(normalizedAssetGuid))
             {
-                if (!AssetFlowLoopKey.TryParse(serializedKey, out var key) || !IsPaused(key) || result.Contains(key))
+                if (result.Contains(key))
                     continue;
 
                 result.Add(key);
@@ -173,11 +250,7 @@ namespace AssetFlow.Editor.Importing
         public void Pause(AssetFlowLoopKey key)
         {
             pausedInMemory.Add(key);
-            if (useSessionState)
-            {
-                SessionState.SetBool(SessionPrefix + key, true);
-                AddSessionKeyForAsset(key);
-            }
+            pauseStore?.Pause(key);
         }
 
         public void Retry(AssetFlowLoopKey key)
@@ -185,39 +258,7 @@ namespace AssetFlow.Editor.Importing
             pausedInMemory.Remove(key);
             ClearCounts(key);
             rollingCounts.Remove(key);
-            if (useSessionState)
-            {
-                SessionState.EraseBool(SessionPrefix + key);
-                RemoveSessionKeyForAsset(key);
-            }
-        }
-
-        private static string AssetSessionListKey(string assetGuid)
-        {
-            return SessionPrefix + (assetGuid ?? string.Empty);
-        }
-
-        private void AddSessionKeyForAsset(AssetFlowLoopKey key)
-        {
-            var listKey = AssetSessionListKey(key.AssetGuid);
-            var keys = new HashSet<string>(
-                SessionState.GetString(listKey, string.Empty).Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries),
-                StringComparer.Ordinal);
-            keys.Add(key.ToString());
-            SessionState.SetString(listKey, string.Join("\n", keys));
-        }
-
-        private void RemoveSessionKeyForAsset(AssetFlowLoopKey key)
-        {
-            var listKey = AssetSessionListKey(key.AssetGuid);
-            var keys = new List<string>(
-                SessionState.GetString(listKey, string.Empty).Split(new[] { '\n' }, StringSplitOptions.RemoveEmptyEntries));
-            keys.RemoveAll(value => string.Equals(value, key.ToString(), StringComparison.Ordinal));
-
-            if (keys.Count == 0)
-                SessionState.EraseString(listKey);
-            else
-                SessionState.SetString(listKey, string.Join("\n", keys));
+            pauseStore?.Retry(key);
         }
 
         private void ClearCounts(AssetFlowLoopKey key)

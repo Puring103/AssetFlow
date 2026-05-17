@@ -58,9 +58,9 @@ namespace AssetFlow.Editor.Workflow
         }
 
         [SerializeField] private NameTarget target = NameTarget.FileNameWithoutExtension;
-        [SerializeField] private string prefix;
-        [SerializeField] private string suffix;
-        [SerializeField] private string pattern;
+        [SerializeField] private string prefix = string.Empty;
+        [SerializeField] private string suffix = string.Empty;
+        [SerializeField] private string pattern = string.Empty;
         [SerializeField] private bool caseSensitive = true;
 
         public override string Summary

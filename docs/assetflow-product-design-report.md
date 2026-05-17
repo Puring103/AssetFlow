@@ -51,7 +51,7 @@ Assets/Data/.assetflow.Text.asset
     <li>AssetFlow 将资源 importer 设置同步到配置中定义的版本。</li>
     <li>AssetFlow 负责按文件夹和类型分发预处理器、后处理器和校验器。</li>
     <li>资源 inspector 必须明确显示接管状态和接管配置。</li>
-    <li>配置变化必须重新处理所有受影响资源，包括新增、删除和修改配置。</li>
+    <li>配置新增、删除和移动必须重新处理受影响资源；配置内容编辑先标记为待应用，由用户显式 Apply。</li>
   </ul>
 </div>
 
@@ -62,7 +62,7 @@ Assets/Data/.assetflow.Text.asset
 | AssetFlow 配置 | 放置在文件夹中的 `.assetflow.{type}.asset` 配置资源 |
 | AssetFlow 类型 | AssetFlow 内部定义的资源类型，例如 Texture、Model、Audio、Text、Prefab |
 | 被接管资源 | 被某个 AssetFlow 配置命中的资源 |
-| Importer Profile | 配置中用于描述 Unity importer 设置的模板或规则 |
+| Template Importer | 配置中用于描述 Unity importer 设置的模板或规则 |
 | 预处理器 | 导入前执行的类型化处理逻辑 |
 | 后处理器 | 导入后执行的类型化处理逻辑 |
 | 校验器 | 对导入结果或资源状态进行检查并输出诊断的逻辑 |
@@ -128,7 +128,7 @@ Assets/
 
 ### 6. Importer 可选
 
-配置可以不提供 Importer Profile。
+配置可以不提供 Template Importer。
 
 这允许“没有 AssetFlow importer 设置”的类型仍然使用预处理器、后处理器和校验器。例如：
 
@@ -165,9 +165,9 @@ Last Applied: 2026-05-11 20:40
 Validation: 0 Errors, 1 Warning
 ```
 
-### 9. 配置变更触发重处理
+### 9. 配置生命周期触发重处理
 
-配置发生新增、删除、移动或修改时，系统必须重新计算受影响资源，并重新处理相关文件。
+配置发生新增、删除或移动时，系统必须重新计算受影响资源，并重新处理相关文件。配置内容被用户编辑时，系统只重新计算管理关系和 stale 状态，不自动批量重处理旧资源；用户通过显式 Apply 把编辑后的规则应用到受管资源，避免 Inspector 编辑过程触发昂贵的导入风暴。
 
 受影响资源包括：
 
@@ -177,7 +177,7 @@ Validation: 0 Errors, 1 Warning
 4. 因 `includeSubfolders` 修改而新增或移除管辖关系的资源。
 5. 因子配置新增而从父配置脱离的资源。
 6. 因子配置删除而回落到父配置的资源。
-7. 因 Importer Profile、预处理器、后处理器或校验器版本变化而需要重新应用规则的资源。
+7. 因 Template Importer、预处理器、后处理器或校验器版本变化而需要重新应用规则的资源，这类资源应显示 stale，等待用户 Apply。
 
 ## User Stories
 
@@ -193,7 +193,7 @@ Validation: 0 Errors, 1 Warning
 10. As a lead artist, I want parent folder configs to optionally include subfolders, so that broad project-wide conventions can be defined once.
 11. As a lead artist, I want child folder configs to override parent configs of the same type, so that special-case folders can have their own rules.
 12. As a lead artist, I want a config to manage only its current folder when recursion is disabled, so that experiments in subfolders are not affected.
-13. As a tools programmer, I want config changes to reprocess all affected files, so that importer settings and validation results never go stale.
+13. As a tools programmer, I want config lifecycle changes to reprocess affected files, and config edits to require explicit Apply, so that importer settings stay predictable without making editing sluggish.
 14. As a tools programmer, I want config deletion to reprocess previously managed files, so that they either become unmanaged or fall back to a parent config.
 15. As a tools programmer, I want config creation to reprocess newly managed files, so that existing files immediately adopt the new rule.
 16. As a tools programmer, I want config movement to update both old and new folder scopes, so that no stale management markers remain.
@@ -204,7 +204,7 @@ Validation: 0 Errors, 1 Warning
 21. As a tools programmer, I want processors and validators to declare supported types, so that users cannot attach incompatible logic to a config.
 22. As a tools programmer, I want processors to be versioned, so that changing processor logic can reprocess affected resources.
 23. As a tools programmer, I want validators to be versioned, so that validation results update when validation rules change.
-24. As a tools programmer, I want importer profiles to be versioned, so that importer setting changes are tracked explicitly.
+24. As a tools programmer, I want template importers to be versioned, so that importer setting changes are tracked explicitly.
 25. As a tools programmer, I want a central resolver to explain which config manages a path, so that the same rule is used by importer hooks, UI and tests.
 26. As a build engineer, I want deterministic processing, so that repeated imports with the same inputs produce the same result.
 27. As a build engineer, I want AssetFlow to avoid recursive import loops, so that editor refresh remains stable.
@@ -227,7 +227,7 @@ Each configuration asset stores:
 |---|---|
 | Type | The single AssetFlow type governed by this config |
 | Include Subfolders | Whether the config recursively manages child folders |
-| Importer Profile | Optional type-specific importer settings |
+| Template Importer | Optional type-specific importer settings |
 | Preprocessors | Ordered list of type-compatible pre-import processors |
 | Postprocessors | Ordered list of type-compatible post-import processors |
 | Validators | Ordered list of type-compatible validators |
@@ -258,7 +258,7 @@ flowchart TD
   B --> C["Find nearest same-type config"]
   C --> D{"Config found?"}
   D -- "No" --> E["Clear stale management marker"]
-  D -- "Yes" --> F["Apply importer profile if present"]
+  D -- "Yes" --> F["Apply template importer if present"]
   F --> G["Run preprocessors"]
   G --> H["Unity imports asset"]
   H --> I["Run postprocessors"]
@@ -278,11 +278,11 @@ Examples:
 | Model | ModelImporter |
 | Audio | AudioImporter |
 | Text | DefaultImporter or TextScriptImporter behavior |
-| Prefab | NativeFormatImporter or no importer profile |
+| Prefab | NativeFormatImporter or no template importer |
 
 Importer application must be idempotent:
 
-1. If the importer already matches the profile, do nothing.
+1. If the importer already matches the template importer, do nothing.
 2. If the importer differs, apply only fields owned by AssetFlow.
 3. Do not call `SaveAndReimport` for the current resource during its own import callback.
 4. Store the applied config identity and rule hash for visibility and stale-state cleanup.
@@ -295,7 +295,7 @@ Recommended pipeline:
 
 ```text
 Preprocess
-  -> Importer profile application
+  -> Importer template importer application
   -> User preprocessors
 Unity import
 Postprocess
@@ -310,7 +310,7 @@ Processors should be deep modules with stable interfaces:
 |---|---|
 | Type Detector | Map asset path/importer to AssetFlow type |
 | Config Resolver | Find effective config for asset path and type |
-| Importer Applier | Apply type-specific importer profile idempotently |
+| Importer Applier | Apply type-specific template importer idempotently |
 | Processor Runner | Execute ordered processors safely |
 | Validator Runner | Execute validators and collect diagnostics |
 | Config Index | Track configs, scopes and last-known managed assets |
@@ -326,7 +326,7 @@ AssetFlow must handle four config lifecycle events:
 |---|---|
 | Config added | Discover managed assets in new scope and reprocess them |
 | Config deleted | Use previous index to find formerly managed assets and re-resolve them |
-| Config modified | Recompute rule hash and reprocess assets governed by old or new rule |
+| Config modified | Recompute rule hash, mark governed assets stale, and wait for explicit Apply |
 | Config moved | Reprocess assets in both old scope and new scope |
 
 Because deleted configs cannot be inspected after deletion, AssetFlow needs a persistent index that records each config's previous path, type, recursive flag, rule hash and managed assets.
@@ -339,7 +339,7 @@ Each config produces a deterministic rule hash:
 ruleHash =
   config type
   includeSubfolders
-  importer profile version and serialized settings
+  template importer version and serialized settings
   preprocessor identities, versions and serialized settings
   postprocessor identities, versions and serialized settings
   validator identities, versions and serialized settings
@@ -379,7 +379,7 @@ AssetFlow diagnostics should cover:
 1. Duplicate same-type configs in one folder.
 2. Invalid processor or validator type selection.
 3. Missing referenced processor or validator.
-4. Importer profile incompatible with AssetFlow type.
+4. Importer template importer incompatible with AssetFlow type.
 5. Config file naming mismatch.
 6. Stale management marker.
 7. Processor exception.
@@ -402,12 +402,12 @@ Diagnostics should be available in:
 5. Enforce same-folder same-type uniqueness through validation and editor diagnostics.
 6. Use nearest same-type config as the winning config.
 7. Support recursive scope with child same-type config override.
-8. Treat importer profile as optional.
+8. Treat template importer as optional.
 9. Treat processors and validators as type-compatible, versioned extension assets.
 10. Store managed status separately from actual importer settings, so the inspector can explain ownership without relying on importer field values alone.
 11. Use deterministic rule hashes to decide whether resources need reprocessing.
 12. Use a persistent config index to support deletion and movement handling.
-13. Use a delayed reprocess queue for config lifecycle changes.
+13. Use a delayed reprocess queue for config add, delete and move lifecycle changes; use explicit Apply for config edits.
 14. Avoid direct recursive imports inside Unity import callbacks.
 15. Prefer idempotent importer application over unconditional rewrites.
 16. Allow unmanaged resources to clear stale AssetFlow markers when they no longer resolve to a config.
@@ -428,16 +428,16 @@ Test coverage should include:
 5. Same folder allows different type configs.
 6. Same folder rejects duplicate same-type configs.
 7. AssetFlow config assets do not manage themselves.
-8. Importer profile is applied to matching resource type.
-9. Resources with no importer profile still run processors and validators.
+8. Importer template importer is applied to matching resource type.
+9. Resources with no template importer still run processors and validators.
 10. Incompatible processor selection produces diagnostics.
 11. Config addition reprocesses newly managed files.
 12. Config deletion reprocesses formerly managed files.
-13. Config modification reprocesses current managed files.
+13. Config modification marks current managed files stale until Apply.
 14. Config movement reprocesses old and new affected ranges.
 15. Resource movement into a managed folder applies the new config.
 16. Resource movement out of a managed folder clears stale management state.
-17. Rule hash changes when processor, validator or importer profile versions change.
+17. Rule hash changes when processor, validator or template importer versions change.
 18. Rule hash does not change for unstable runtime-only state.
 19. Reprocess queue deduplicates asset paths.
 20. Importer application is idempotent.

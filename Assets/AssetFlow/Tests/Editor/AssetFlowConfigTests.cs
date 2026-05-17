@@ -18,7 +18,7 @@ namespace AssetFlow.Editor.Tests
                 Assert.That(config.TypeKey, Is.EqualTo(typeof(TextureImporter).FullName));
                 Assert.That(config.IncludeSubfolders, Is.False);
                 Assert.That(config.PreImportProcessors, Has.Count.EqualTo(1));
-                Assert.That(config.PreImportProcessors[0], Is.TypeOf<ApplyTextureImporterPresetProcessor>());
+                Assert.That(config.PreImportProcessors[0], Is.TypeOf<ApplyTextureImporterTemplateProcessor>());
             }
             finally
             {
@@ -27,16 +27,16 @@ namespace AssetFlow.Editor.Tests
         }
 
         [Test]
-        public void EnsureSinglePresetProcessor_RemovesDuplicateTemplateProcessors()
+        public void EnsureSingleTemplateProcessor_RemovesDuplicateTemplateProcessors()
         {
             var config = ScriptableObject.CreateInstance<AssetFlowTextureConfig>();
             try
             {
                 config.ResetToDefaultsForTests();
                 var first = config.PreImportProcessors[0];
-                config.AddPreImportProcessorForTests(ScriptableObject.CreateInstance<ApplyTextureImporterPresetProcessor>());
+                config.AddPreImportProcessorForTests(ScriptableObject.CreateInstance<ApplyTextureImporterTemplateProcessor>());
 
-                config.EnsureSinglePresetProcessor();
+                config.EnsureSingleTemplateProcessor();
 
                 Assert.That(config.PreImportProcessors, Has.Count.EqualTo(1));
                 Assert.That(config.PreImportProcessors[0], Is.SameAs(first));
@@ -56,11 +56,32 @@ namespace AssetFlow.Editor.Tests
                 config.ResetToDefaultsForTests();
                 var first = config.ComputeRuleHash();
 
-                var processor = (ApplyTextureImporterPresetProcessor)config.PreImportProcessors[0];
+                var processor = (ApplyTextureImporterTemplateProcessor)config.PreImportProcessors[0];
                 processor.SetVersionSaltForTests("changed");
                 var second = config.ComputeRuleHash();
 
                 Assert.That(second, Is.Not.EqualTo(first));
+            }
+            finally
+            {
+                Object.DestroyImmediate(config);
+            }
+        }
+
+        [Test]
+        public void RuleHash_IsStableForSameSerializedSettings()
+        {
+            var config = ScriptableObject.CreateInstance<AssetFlowTextureConfig>();
+            try
+            {
+                config.ResetToDefaultsForTests();
+                var processor = (ApplyTextureImporterTemplateProcessor)config.PreImportProcessors[0];
+                processor.SetVersionSaltForTests("stable");
+
+                var first = config.ComputeRuleHash();
+                var second = config.ComputeRuleHash();
+
+                Assert.That(second, Is.EqualTo(first));
             }
             finally
             {

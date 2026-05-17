@@ -32,6 +32,7 @@ namespace AssetFlow.Editor.UI
         private SerializedObject selectedSerializedObject;
         private AssetFlowConfig selectedConfig;
         private AssetFlowManagerConfigView selectedView;
+        private readonly AssetFlowAppliedStateStore appliedStateStore = new AssetFlowAppliedStateStore();
         private readonly AssetFlowConfigPanelDrawer configPanelDrawer = new AssetFlowConfigPanelDrawer();
         private string selectedNodeKey = string.Empty;
         private string selectedTypeFilter = string.Empty;
@@ -218,7 +219,9 @@ namespace AssetFlow.Editor.UI
                     {
                         inspectorScroll = scrollView.scrollPosition;
                         var currentSnapshot = selectedConfig.ToSnapshot();
-                        var currentOutOfDate = CountOutOfDate(selectedView.ManagedAssetPaths, currentSnapshot, new AssetFlowIndexStore().Load());
+                        var currentOutOfDate = selectedView.OutOfDateCount;
+                        var applied = appliedStateStore.Find(currentSnapshot.ConfigGuid);
+                        var hasUnappliedChanges = applied == null || applied.ruleHash != currentSnapshot.RuleHash;
                         var changed = configPanelDrawer.Draw(
                             selectedConfig,
                             selectedSerializedObject,
@@ -227,10 +230,10 @@ namespace AssetFlow.Editor.UI
                             selectedView.ManagedAssetPaths.Count,
                             currentOutOfDate,
                             selectedView.ValidationCount,
-                            currentOutOfDate > 0,
+                            hasUnappliedChanges || currentOutOfDate > 0,
                             ApplySelectedConfig);
                         if (changed)
-                            RequestConfigReconcile();
+                            Repaint();
                     }
                     finally
                     {
@@ -421,11 +424,12 @@ namespace AssetFlow.Editor.UI
                 .OrderBy(snapshot => snapshot.FolderPath, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(snapshot => FriendlyTypeName(snapshot.TypeKey), StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            var signature = BuildCacheSignature(index, snapshots);
+            var projection = AssetFlowManagerProjection.Build(index, snapshots);
+            var signature = projection.Signature;
             if (string.Equals(signature, cachedIndexSignature, StringComparison.Ordinal))
                 return;
 
-            Refresh(index, snapshots, signature);
+            Refresh(index, snapshots, projection);
         }
 
         private void Refresh(bool force = false)
@@ -441,20 +445,20 @@ namespace AssetFlow.Editor.UI
                 .OrderBy(snapshot => snapshot.FolderPath, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(snapshot => FriendlyTypeName(snapshot.TypeKey), StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            var signature = BuildCacheSignature(index, snapshots);
+            var projection = AssetFlowManagerProjection.Build(index, snapshots);
+            var signature = projection.Signature;
             if (!force && string.Equals(signature, cachedIndexSignature, StringComparison.Ordinal))
                 return;
 
-            Refresh(index, snapshots, signature);
+            Refresh(index, snapshots, projection);
         }
 
-        private void Refresh(AssetFlowIndex index, List<AssetFlowConfigSnapshot> snapshots, string signature)
+        private void Refresh(AssetFlowIndex index, List<AssetFlowConfigSnapshot> snapshots, AssetFlowManagerProjection projection)
         {
             var previousConfigGuid = selectedView?.Snapshot.ConfigGuid ?? string.Empty;
             configViews.Clear();
-            cachedIndexSignature = signature;
-            var assetsByConfigGuid = FindManagedAssetPathsByConfig(index, snapshots, out var cacheNeedsReconcile);
-            if (cacheNeedsReconcile)
+            cachedIndexSignature = projection.Signature;
+            if (projection.CacheNeedsReconcile)
                 RequestConfigReconcile();
 
             foreach (var snapshot in snapshots)
@@ -463,11 +467,15 @@ namespace AssetFlow.Editor.UI
                 if (config == null)
                     continue;
 
-                var assetPaths = assetsByConfigGuid.TryGetValue(snapshot.ConfigGuid, out var paths)
+                var assetPaths = projection.ManagedAssetPathsByConfigGuid.TryGetValue(snapshot.ConfigGuid, out var paths)
                     ? paths
                     : new List<string>();
-                var outOfDate = CountOutOfDate(assetPaths, snapshot, index);
-                var validationCount = index.ValidationResults.Count(record => record.configGuid == snapshot.ConfigGuid);
+                var outOfDate = projection.OutOfDateCountByConfigGuid.TryGetValue(snapshot.ConfigGuid, out var stale)
+                    ? stale
+                    : 0;
+                var validationCount = projection.ValidationCountByConfigGuid.TryGetValue(snapshot.ConfigGuid, out var issues)
+                    ? issues
+                    : 0;
                 configViews.Add(new AssetFlowManagerConfigView(config, snapshot, assetPaths, outOfDate, validationCount));
             }
 
@@ -599,86 +607,12 @@ namespace AssetFlow.Editor.UI
             IReadOnlyList<AssetFlowConfigSnapshot> snapshots,
             out bool cacheNeedsReconcile)
         {
-            cacheNeedsReconcile = false;
-            var resolver = new AssetFlowResolver(snapshots);
-            var assetsByConfigGuid = snapshots.ToDictionary(
-                snapshot => snapshot.ConfigGuid,
-                _ => new List<string>(),
-                StringComparer.OrdinalIgnoreCase);
-
-            foreach (var asset in index.Assets)
-            {
-                if (string.IsNullOrEmpty(asset.assetGuid))
-                    continue;
-
-                var currentPath = AssetDatabase.GUIDToAssetPath(asset.assetGuid);
-                if (string.IsNullOrEmpty(currentPath))
-                {
-                    cacheNeedsReconcile = true;
-                    continue;
-                }
-
-                var importer = AssetImporter.GetAtPath(currentPath);
-                if (importer == null)
-                {
-                    cacheNeedsReconcile = true;
-                    continue;
-                }
-
-                var result = resolver.Resolve(currentPath, importer.GetType().FullName);
-                if (result.Status != AssetFlowResolveStatus.Managed)
-                {
-                    cacheNeedsReconcile = true;
-                    continue;
-                }
-
-                if (assetsByConfigGuid.TryGetValue(result.Config.ConfigGuid, out var paths))
-                {
-                    if (!string.Equals(asset.assetPath, currentPath, StringComparison.OrdinalIgnoreCase)
-                        || !string.Equals(asset.managedByConfigGuid, result.Config.ConfigGuid, StringComparison.OrdinalIgnoreCase))
-                    {
-                        cacheNeedsReconcile = true;
-                    }
-
-                    paths.Add(AssetFlowPath.Normalize(currentPath));
-                }
-            }
-
-            return assetsByConfigGuid;
+            return AssetFlowManagerProjection.FindManagedAssetPathsByConfig(index, snapshots, out cacheNeedsReconcile);
         }
 
         internal static string BuildCacheSignature(AssetFlowIndex index, IReadOnlyList<AssetFlowConfigSnapshot> snapshots)
         {
-            var configPart = string.Join(
-                "|",
-                snapshots.Select(snapshot => $"{snapshot.ConfigGuid}:{snapshot.RuleHash}:{snapshot.ConfigPath}"));
-            var assetPart = string.Join(
-                "|",
-                index.Assets
-                    .OrderBy(asset => asset.assetGuid, StringComparer.OrdinalIgnoreCase)
-                    .Select(asset =>
-                    {
-                        var currentPath = string.IsNullOrEmpty(asset.assetGuid)
-                            ? string.Empty
-                            : AssetDatabase.GUIDToAssetPath(asset.assetGuid);
-                        return $"{asset.assetGuid}:{asset.assetPath}:{AssetFlowPath.Normalize(currentPath)}:{asset.managedByConfigGuid}:{asset.lastProcessedRuleHash}:{asset.lastProcessedTicks}";
-                    }));
-            var validationPart = string.Join(
-                "|",
-                index.ValidationResults
-                    .OrderBy(record => record.assetGuid, StringComparer.OrdinalIgnoreCase)
-                    .ThenBy(record => record.configGuid, StringComparer.OrdinalIgnoreCase)
-                    .Select(record => $"{record.assetGuid}:{record.configGuid}:{record.severity}:{record.message}:{record.ticks}"));
-            return $"{configPart}\n{assetPart}\n{validationPart}";
-        }
-
-        private static int CountOutOfDate(IEnumerable<string> assetPaths, AssetFlowConfigSnapshot snapshot, AssetFlowIndex index)
-        {
-            return assetPaths.Count(path =>
-            {
-                var guid = AssetDatabase.AssetPathToGUID(path);
-                return index.IsOutOfDate(guid, snapshot.ConfigGuid, snapshot.RuleHash);
-            });
+            return AssetFlowManagerProjection.BuildCacheSignature(index, snapshots);
         }
 
         internal static string FriendlyConfigTitle(AssetFlowConfigSnapshot snapshot)

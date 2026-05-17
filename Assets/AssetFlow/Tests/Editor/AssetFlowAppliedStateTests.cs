@@ -57,5 +57,18 @@ namespace AssetFlow.Editor.Tests
             Assert.That(File.Exists(path), Is.True);
             Assert.That(store.Load().configs, Is.Empty);
         }
+
+        [Test]
+        public void Load_ReturnsEmptyStateWhenFileIsBlankOrMalformed()
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            File.WriteAllText(path, string.Empty);
+            var store = new AssetFlowAppliedStateStore(path);
+
+            Assert.That(store.Load().configs, Is.Empty);
+
+            File.WriteAllText(path, "{ this is not json");
+            Assert.That(store.Load().configs, Is.Empty);
+        }
     }
 }

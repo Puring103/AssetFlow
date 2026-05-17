@@ -7,12 +7,12 @@ namespace AssetFlow.Editor.Workflow
         private void Reset()
         {
             ResetProcessorLists();
-            AddPreImportProcessor(CreateInstance<ApplyModelImporterPresetProcessor>());
+            AddPreImportProcessor(CreateInstance<ApplyModelImporterTemplateProcessor>());
         }
 
         private void OnValidate()
         {
-            EnsureSinglePresetProcessor();
+            EnsureSingleTemplateProcessor();
         }
     }
 }

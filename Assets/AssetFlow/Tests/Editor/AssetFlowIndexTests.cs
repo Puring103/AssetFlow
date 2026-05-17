@@ -102,6 +102,20 @@ namespace AssetFlow.Editor.Tests
         }
 
         [Test]
+        public void IsOutOfDate_ReturnsTrueWhenAssetRecordBelongsToDifferentConfig()
+        {
+            var index = new AssetFlowIndex();
+            index.UpsertAsset(new AssetFlowAssetRecord
+            {
+                assetGuid = "asset",
+                managedByConfigGuid = "old-config",
+                lastProcessedRuleHash = "rule",
+            });
+
+            Assert.That(index.IsOutOfDate("asset", "new-config", "rule"), Is.True);
+        }
+
+        [Test]
         public void ReplaceValidationResults_ReplacesResultsForSameAssetAndConfigOnly()
         {
             var index = new AssetFlowIndex();
@@ -136,6 +150,20 @@ namespace AssetFlow.Editor.Tests
 
             Assert.That(index.Configs, Has.Count.EqualTo(1));
             Assert.That(index.Configs[0].configGuid, Is.EqualTo("alive"));
+        }
+
+        [Test]
+        public void Load_ReturnsEmptyIndexWhenFileIsMalformed()
+        {
+            var path = Path.Combine("Library", "AssetFlowTests", "MalformedIndex.json");
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+            File.WriteAllText(path, "{ not valid json");
+
+            var loaded = new AssetFlowIndexStore(path).Load();
+
+            Assert.That(loaded.Configs, Is.Empty);
+            Assert.That(loaded.Assets, Is.Empty);
+            Assert.That(loaded.ValidationResults, Is.Empty);
         }
     }
 }

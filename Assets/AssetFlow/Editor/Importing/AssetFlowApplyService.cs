@@ -45,18 +45,11 @@ namespace AssetFlow.Editor.Importing
             IEnumerable<AssetFlowConfigSnapshot> allConfigs,
             IEnumerable<AssetFlowApplyCandidate> candidates)
         {
-            var resolver = new AssetFlowResolver(allConfigs);
-            return candidates
-                .Where(candidate => candidate.ImporterTypeKey == config.TypeKey)
-                .Where(candidate =>
-                {
-                    var result = resolver.Resolve(candidate.Path, candidate.ImporterTypeKey);
-                    return result.Status == AssetFlowResolveStatus.Managed
-                           && result.Config.ConfigGuid == config.ConfigGuid;
-                })
-                .Select(candidate => candidate.Path)
-                .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
-                .ToList();
+            return AssetFlowManagedAssetReconciler.FindManagedAssetsForConfig(
+                config,
+                allConfigs,
+                (candidates ?? Enumerable.Empty<AssetFlowApplyCandidate>())
+                    .Select(candidate => new AssetFlowManagedAssetCandidate(candidate.Guid, candidate.Path, candidate.ImporterTypeKey)));
         }
 
         public static int ApplyToManagedAssets(AssetFlowConfig config)
@@ -64,6 +57,7 @@ namespace AssetFlow.Editor.Importing
             if (config == null)
                 return 0;
 
+            SaveConfigAndSubAssets(config);
             AssetFlowDependency.RegisterAll();
             var snapshot = config.ToSnapshot();
             var configs = AssetFlowConfigScanner.FindConfigSnapshots();
@@ -141,24 +135,27 @@ namespace AssetFlow.Editor.Importing
             appliedStateStore = store ?? new AssetFlowAppliedStateStore();
         }
 
+        private static void SaveConfigAndSubAssets(AssetFlowConfig config)
+        {
+            var configPath = AssetDatabase.GetAssetPath(config);
+            if (string.IsNullOrEmpty(configPath))
+                return;
+
+            foreach (var asset in AssetDatabase.LoadAllAssetsAtPath(configPath))
+            {
+                if (asset != null)
+                    AssetDatabase.SaveAssetIfDirty(asset);
+            }
+        }
+
         private static IEnumerable<AssetFlowApplyCandidate> FindImporterCandidates(string typeKey)
         {
-            foreach (var guid in AssetDatabase.FindAssets(string.Empty))
-            {
-                var path = AssetDatabase.GUIDToAssetPath(guid);
-                if (string.IsNullOrEmpty(path) || path.EndsWith(".asset", StringComparison.OrdinalIgnoreCase))
-                    continue;
-                if (AssetFlowPresetUtility.IsTemplateSourceAsset(path))
-                    continue;
+            var snapshots = AssetFlowConfigScanner.FindConfigSnapshots()
+                .Where(snapshot => string.Equals(snapshot.TypeKey, typeKey, StringComparison.Ordinal))
+                .ToList();
 
-                var importer = AssetImporter.GetAtPath(path);
-                if (importer == null)
-                    continue;
-
-                var importerTypeKey = importer.GetType().FullName;
-                if (importerTypeKey == typeKey)
-                    yield return new AssetFlowApplyCandidate(guid, path, importerTypeKey);
-            }
+            foreach (var candidate in AssetFlowManagedAssetReconciler.FindCandidates(snapshots, typeKey: typeKey))
+                yield return new AssetFlowApplyCandidate(candidate.Guid, candidate.Path, candidate.ImporterTypeKey);
         }
     }
 }

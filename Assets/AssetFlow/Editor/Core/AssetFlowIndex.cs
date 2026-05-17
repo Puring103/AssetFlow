@@ -146,8 +146,10 @@ namespace AssetFlow.Editor.Core
             if (record == null)
                 return true;
 
-            return record.managedByConfigGuid == configGuid
-                   && !string.Equals(record.lastProcessedRuleHash, currentRuleHash, StringComparison.Ordinal);
+            if (!string.Equals(record.managedByConfigGuid, configGuid, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            return !string.Equals(record.lastProcessedRuleHash, currentRuleHash, StringComparison.Ordinal);
         }
     }
 
@@ -171,7 +173,16 @@ namespace AssetFlow.Editor.Core
             if (string.IsNullOrWhiteSpace(json))
                 return new AssetFlowIndex();
 
-            var data = JsonUtility.FromJson<AssetFlowIndexData>(json);
+            AssetFlowIndexData data;
+            try
+            {
+                data = JsonUtility.FromJson<AssetFlowIndexData>(json);
+            }
+            catch (ArgumentException)
+            {
+                return new AssetFlowIndex();
+            }
+
             return new AssetFlowIndex(data);
         }
 

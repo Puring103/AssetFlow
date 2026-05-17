@@ -36,7 +36,22 @@ namespace AssetFlow.Editor.Core
                 return new AssetFlowAppliedStateData();
 
             var json = File.ReadAllText(path);
-            var data = JsonUtility.FromJson<AssetFlowAppliedStateData>(json);
+            if (string.IsNullOrWhiteSpace(json))
+                return new AssetFlowAppliedStateData();
+
+            AssetFlowAppliedStateData data;
+            try
+            {
+                data = JsonUtility.FromJson<AssetFlowAppliedStateData>(json);
+            }
+            catch (ArgumentException)
+            {
+                return new AssetFlowAppliedStateData();
+            }
+
+            if (data == null)
+                return new AssetFlowAppliedStateData();
+
             data.configs = data.configs ?? new List<AssetFlowAppliedConfigRecord>();
             return data;
         }

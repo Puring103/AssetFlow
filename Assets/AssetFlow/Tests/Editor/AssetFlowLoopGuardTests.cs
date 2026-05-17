@@ -54,8 +54,9 @@ namespace AssetFlow.Editor.Tests
         [Test]
         public void GetPausedKeysForAsset_ReturnsSessionStateKeysAfterNewGuardIsCreated()
         {
-            var firstGuard = new AssetFlowLoopGuard(threshold: 1, useSessionState: true);
-            var secondGuard = new AssetFlowLoopGuard(threshold: 1, useSessionState: true);
+            var pauseStore = new InMemoryPauseStore();
+            var firstGuard = new AssetFlowLoopGuard(threshold: 1, pauseStore: pauseStore);
+            var secondGuard = new AssetFlowLoopGuard(threshold: 1, pauseStore: pauseStore);
             var key = new AssetFlowLoopKey(
                 "session-asset",
                 "session-config",
@@ -95,6 +96,39 @@ namespace AssetFlow.Editor.Tests
             guard.Retry(key);
 
             Assert.That(guard.ShouldRun(key, string.Empty), Is.True);
+        }
+
+        private sealed class InMemoryPauseStore : ILoopGuardPauseStore
+        {
+            private readonly System.Collections.Generic.HashSet<AssetFlowLoopKey> keys =
+                new System.Collections.Generic.HashSet<AssetFlowLoopKey>();
+
+            public bool IsPaused(AssetFlowLoopKey key)
+            {
+                return keys.Contains(key);
+            }
+
+            public System.Collections.Generic.IReadOnlyList<AssetFlowLoopKey> GetPausedKeysForAsset(string assetGuid)
+            {
+                var result = new System.Collections.Generic.List<AssetFlowLoopKey>();
+                foreach (var key in keys)
+                {
+                    if (key.AssetGuid == assetGuid)
+                        result.Add(key);
+                }
+
+                return result;
+            }
+
+            public void Pause(AssetFlowLoopKey key)
+            {
+                keys.Add(key);
+            }
+
+            public void Retry(AssetFlowLoopKey key)
+            {
+                keys.Remove(key);
+            }
         }
     }
 }

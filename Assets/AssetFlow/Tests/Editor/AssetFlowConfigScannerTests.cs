@@ -34,7 +34,7 @@ namespace AssetFlow.Editor.Tests
             Assert.That(path, Is.EqualTo(Path.Combine(TestFolder, "AssetFlow.Texture.asset").Replace('\\', '/')));
             Assert.That(config, Is.Not.Null);
             Assert.That(config.PreImportProcessors, Has.Count.EqualTo(1));
-            Assert.That(AssetDatabase.LoadAllAssetsAtPath(path), Has.Some.TypeOf<ApplyTextureImporterPresetProcessor>());
+            Assert.That(AssetDatabase.LoadAllAssetsAtPath(path), Has.Some.TypeOf<ApplyTextureImporterTemplateProcessor>());
         }
 
         [Test]
@@ -52,8 +52,8 @@ namespace AssetFlow.Editor.Tests
             Assert.That(audioConfig.TypeKey, Is.EqualTo(typeof(AudioImporter).FullName));
             Assert.That(modelConfig.PreImportProcessors, Has.Count.EqualTo(1));
             Assert.That(audioConfig.PreImportProcessors, Has.Count.EqualTo(1));
-            Assert.That(AssetDatabase.LoadAllAssetsAtPath(modelPath), Has.Some.TypeOf<ApplyModelImporterPresetProcessor>());
-            Assert.That(AssetDatabase.LoadAllAssetsAtPath(audioPath), Has.Some.TypeOf<ApplyAudioImporterPresetProcessor>());
+            Assert.That(AssetDatabase.LoadAllAssetsAtPath(modelPath), Has.Some.TypeOf<ApplyModelImporterTemplateProcessor>());
+            Assert.That(AssetDatabase.LoadAllAssetsAtPath(audioPath), Has.Some.TypeOf<ApplyAudioImporterTemplateProcessor>());
         }
 
         [Test]
@@ -65,6 +65,16 @@ namespace AssetFlow.Editor.Tests
 
             Assert.That(snapshots, Has.Some.Matches<Core.AssetFlowConfigSnapshot>(
                 snapshot => snapshot.FolderPath == TestFolder && snapshot.TypeKey == typeof(TextureImporter).FullName));
+        }
+
+        [Test]
+        public void DependencyBootstrap_RegistersDuringEditorLoad()
+        {
+            var attribute = typeof(AssetFlowDependencyBootstrap)
+                .GetCustomAttributes(typeof(InitializeOnLoadAttribute), inherit: false);
+
+            Assert.That(attribute, Is.Not.Empty);
+            Assert.DoesNotThrow(AssetFlowDependency.RegisterAll);
         }
     }
 }

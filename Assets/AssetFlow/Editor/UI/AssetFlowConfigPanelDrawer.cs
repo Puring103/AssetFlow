@@ -27,8 +27,8 @@ namespace AssetFlow.Editor.UI
         private GUIStyle badgeStyle;
         private GUIStyle sectionBoxStyle;
         private GUIStyle handlerRowStyle;
-        private UnityEngine.Object templatePresetEditorTarget;
-        private UnityEditor.Editor templatePresetEditor;
+        private UnityEngine.Object templateImporterEditorTarget;
+        private UnityEditor.Editor templateImporterEditor;
         private readonly Dictionary<string, List<Type>> addableHandlerTypesByKey = new Dictionary<string, List<Type>>();
         private string selectedTab = PreImportTab;
         private string expandedHandlerKey = string.Empty;
@@ -93,11 +93,11 @@ namespace AssetFlow.Editor.UI
 
         private void DisposeTemplateImporterEditor()
         {
-            if (templatePresetEditor != null)
-                UnityEngine.Object.DestroyImmediate(templatePresetEditor);
+            if (templateImporterEditor != null)
+                UnityEngine.Object.DestroyImmediate(templateImporterEditor);
 
-            templatePresetEditor = null;
-            templatePresetEditorTarget = null;
+            templateImporterEditor = null;
+            templateImporterEditorTarget = null;
         }
 
         private void DrawHeader(string title, string subtitle)
@@ -247,6 +247,15 @@ namespace AssetFlow.Editor.UI
         private bool DrawHandlerInspector(AssetFlowConfig config, AssetFlowHandler handler)
         {
             var changed = false;
+            if (handler is IAssetFlowImporterTemplateProcessor templateProcessor)
+            {
+                changed |= DrawTemplateImporterInspector(config, templateProcessor);
+                if (changed)
+                    EditorUtility.SetDirty(config);
+
+                return changed;
+            }
+
             using (new EditorGUI.IndentLevelScope())
             using (var handlerObject = new SerializedObject(handler))
             {
@@ -258,13 +267,6 @@ namespace AssetFlow.Editor.UI
                     enterChildren = false;
                     if (iterator.propertyPath == "m_Script" || iterator.propertyPath == "versionSalt")
                         continue;
-
-                    if (handler is IAssetFlowImporterTemplateProcessor && (iterator.propertyPath == "preset" || iterator.propertyPath == "templateImporter"))
-                    {
-                        if (iterator.propertyPath == "preset")
-                            changed |= DrawTemplateImporterInspector(config, (IAssetFlowImporterTemplateProcessor)handler);
-                        continue;
-                    }
 
                     EditorGUILayout.PropertyField(iterator, includeChildren: true);
                 }
@@ -280,90 +282,40 @@ namespace AssetFlow.Editor.UI
 
         private bool DrawTemplateImporterInspector(AssetFlowConfig config, IAssetFlowImporterTemplateProcessor processor)
         {
-            AssetFlowPresetUtility.RemoveLegacyPresetSubAssets(config);
-            AssetFlowPresetUtility.EnsureTemplateImporter(config);
+            if (AssetFlowTemplateImporterUtility.NeedsTemplateImporterMaintenance(config))
+                AssetFlowTemplateImporterUtility.EnsureTemplateImporter(config);
 
-            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            var templateImporter = processor.TemplateImporter;
+            if (templateImporter == null)
             {
-                EditorGUILayout.LabelField("Template Importer", EditorStyles.boldLabel);
-                using (new EditorGUILayout.HorizontalScope())
-                {
-                    var preset = processor.TemplatePreset;
-                    using (new EditorGUI.DisabledScope(true))
-                    {
-                        EditorGUILayout.ObjectField(
-                            "Preset",
-                            preset,
-                            typeof(Preset),
-                            false);
-                    }
-
-                    if (GUILayout.Button("Ping", GUILayout.Width(52f)))
-                    {
-                        AssetFlowPresetUtility.PingPreset(config);
-                    }
-
-                    if (GUILayout.Button("Clear", GUILayout.Width(52f)))
-                    {
-                        var cleared = AssetFlowPresetUtility.ClearPreset(config);
-                        if (cleared)
-                        {
-                            DisposeTemplateImporterEditor();
-                            GUIUtility.ExitGUI();
-                        }
-                    }
-                }
-
-                EditorGUILayout.HelpBox(
-                    "Capture a sample asset's importer to edit its settings here without keeping a template source asset.",
-                    MessageType.Info);
-
-                if (GUILayout.Button("Capture From Selected Asset"))
-                {
-                    var selectedPath = AssetDatabase.GetAssetPath(Selection.activeObject);
-                    if (string.IsNullOrEmpty(selectedPath) || !AssetFlowPresetUtility.CaptureFromAsset(config, selectedPath))
-                    {
-                        EditorUtility.DisplayDialog(
-                            "AssetFlow",
-                            "Select an asset whose importer type matches this workflow, then try again.",
-                            "OK");
-                    }
-                    else
-                    {
-                        DisposeTemplateImporterEditor();
-                        GUIUtility.ExitGUI();
-                    }
-                }
-
-                var currentPreset = processor.TemplatePreset;
-                if (currentPreset == null)
-                {
-                    DisposeTemplateImporterEditor();
-                    EditorGUILayout.HelpBox("No importer preset captured yet.", MessageType.Warning);
-                    return false;
-                }
-
-                if (templatePresetEditorTarget != currentPreset)
-                {
-                    DisposeTemplateImporterEditor();
-                    templatePresetEditorTarget = currentPreset;
-                    templatePresetEditor = UnityEditor.Editor.CreateEditor(currentPreset);
-                }
-
-                if (templatePresetEditor == null)
-                    return false;
-
-                EditorGUI.BeginChangeCheck();
-                templatePresetEditor.OnInspectorGUI();
-                if (!EditorGUI.EndChangeCheck())
-                    return false;
-
-                EditorUtility.SetDirty(currentPreset);
-                EditorUtility.SetDirty((UnityEngine.Object)processor);
-                EditorUtility.SetDirty(config);
-                AssetDatabase.SaveAssets();
-                return true;
+                DisposeTemplateImporterEditor();
+                return false;
             }
+
+            if (templateImporterEditorTarget != templateImporter)
+            {
+                DisposeTemplateImporterEditor();
+                templateImporterEditorTarget = templateImporter;
+                templateImporterEditor = UnityEditor.Editor.CreateEditor(templateImporter);
+            }
+
+            if (templateImporterEditor == null)
+                return false;
+
+            EditorGUI.BeginChangeCheck();
+            templateImporterEditor.OnInspectorGUI();
+            if (!EditorGUI.EndChangeCheck())
+                return false;
+
+            if (processor.TemplatePreset != null)
+                processor.TemplatePreset.UpdateProperties(templateImporter);
+
+            EditorUtility.SetDirty(templateImporter);
+            if (processor.TemplatePreset != null)
+                EditorUtility.SetDirty(processor.TemplatePreset);
+            EditorUtility.SetDirty((UnityEngine.Object)processor);
+            EditorUtility.SetDirty(config);
+            return true;
         }
 
         private void DrawAddHandlerMenu(AssetFlowConfig config, SerializedProperty property)
@@ -547,7 +499,7 @@ namespace AssetFlow.Editor.UI
                 return "Missing Handler";
 
             if (handler is IAssetFlowImporterTemplateProcessor)
-                return ObjectNames.NicifyVariableName(handler.GetType().Name.Replace("PresetProcessor", "TemplateProcessor"));
+                return ObjectNames.NicifyVariableName(handler.GetType().Name.Replace("TemplateProcessor", "TemplateProcessor"));
 
             return ObjectNames.NicifyVariableName(handler.GetType().Name);
         }

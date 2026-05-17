@@ -32,5 +32,20 @@ namespace AssetFlow.Editor.Tests
 
             Assert.That(managed, Is.EqualTo(new List<string> { "Assets/icon.png" }));
         }
+
+        [Test]
+        public void FindManagedAssetsForConfig_UsesCurrentConfigSnapshotWhenConfigIsNew()
+        {
+            var target = new AssetFlowConfigSnapshot("new", "Assets/New/AssetFlow.Texture.asset", "Assets/New", TextureType, false, "hash");
+            var configs = new[] { target };
+            var assets = new[]
+            {
+                new AssetFlowApplyCandidate("asset", "Assets/New/icon.png", TextureType),
+            };
+
+            var managed = AssetFlowApplyService.FindManagedAssetsForConfig(target, configs, assets);
+
+            Assert.That(managed, Is.EqualTo(new List<string> { "Assets/New/icon.png" }));
+        }
     }
 }

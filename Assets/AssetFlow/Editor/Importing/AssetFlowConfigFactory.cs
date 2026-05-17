@@ -38,6 +38,7 @@ namespace AssetFlow.Editor.Importing
 
             AssetDatabase.CreateAsset(config, assetPath);
             AddChildHandlers(config);
+            AssetFlowTemplateImporterUtility.EnsureTemplateImporter(config);
             EditorUtility.SetDirty(config);
             AssetDatabase.SaveAssets();
             AssetDatabase.ImportAsset(assetPath);

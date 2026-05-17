@@ -69,9 +69,9 @@ namespace AssetFlow.Editor.Tests
             ConfigureAudioImporter(audioSource, forceToMono: true, loadInBackground: true);
             ConfigureAudioImporter(audioTarget, forceToMono: false, loadInBackground: false);
 
-            var textureConfig = CreateAndCapture<AssetFlowTextureConfig>(TextureFolder, textureSource, AssetFlowConfigFactory.CreateTextureConfig);
-            var modelConfig = CreateAndCapture<AssetFlowModelConfig>(ModelFolder, modelSource, AssetFlowConfigFactory.CreateModelConfig);
-            var audioConfig = CreateAndCapture<AssetFlowAudioConfig>(AudioFolder, audioSource, AssetFlowConfigFactory.CreateAudioConfig);
+            var textureConfig = CreateConfig<AssetFlowTextureConfig>(TextureFolder, AssetFlowConfigFactory.CreateTextureConfig);
+            var modelConfig = CreateConfig<AssetFlowModelConfig>(ModelFolder, AssetFlowConfigFactory.CreateModelConfig);
+            var audioConfig = CreateConfig<AssetFlowAudioConfig>(AudioFolder, AssetFlowConfigFactory.CreateAudioConfig);
 
             Assert.That(AssetFlowApplyService.FindManagedAssetsForConfig(textureConfig), Is.EquivalentTo(new[] { textureSource, textureTarget }));
             Assert.That(AssetFlowApplyService.FindManagedAssetsForConfig(modelConfig), Is.EquivalentTo(new[] { modelSource, modelTarget }));
@@ -346,6 +346,54 @@ namespace AssetFlow.Editor.Tests
         }
 
         [Test]
+        public void ConfigurationChange_WithAddedConfig_AutomaticallyReprocessesNewlyManagedAssets()
+        {
+            var texturePath = WritePng(TextureFolder + "/auto-added-config.png");
+            var configPath = AssetFlowConfigFactory.CreateTextureConfig(TextureFolder);
+            var config = AssetDatabase.LoadAssetAtPath<AssetFlowTextureConfig>(configPath);
+
+            var count = AssetFlowConfigurationChangeProcessor.ProcessConfigurationChangesImmediatelyForTests(new[]
+            {
+                new AssetFlowConfigurationChangeProcessor.Change(
+                    configPath,
+                    AssetFlowConfigurationChangeProcessor.ChangeKind.Added),
+            });
+
+            var index = new AssetFlowIndexStore().Load();
+            var assetRecord = FindAssetRecord(index, texturePath);
+            Assert.That(count, Is.EqualTo(1));
+            Assert.That(assetRecord.managedByConfigGuid, Is.EqualTo(config.ToSnapshot().ConfigGuid));
+            Assert.That(assetRecord.lastProcessedRuleHash, Is.EqualTo(config.ComputeRuleHash()));
+        }
+
+        [Test]
+        public void ConfigurationChange_WithEditedConfig_MarksManagedAssetsOutOfDateWithoutAutoReprocess()
+        {
+            var texturePath = WritePng(TextureFolder + "/edited-config-stale.png");
+            var configPath = AssetFlowConfigFactory.CreateTextureConfig(TextureFolder);
+            var config = AssetDatabase.LoadAssetAtPath<AssetFlowTextureConfig>(configPath);
+
+            AssetDatabase.ImportAsset(texturePath, ImportAssetOptions.ForceUpdate);
+            var firstRuleHash = config.ComputeRuleHash();
+
+            config.IncludeSubfolders = !config.IncludeSubfolders;
+            EditorUtility.SetDirty(config);
+            AssetDatabase.SaveAssets();
+            var count = AssetFlowConfigurationChangeProcessor.ProcessConfigurationChangesImmediatelyForTests(new[]
+            {
+                new AssetFlowConfigurationChangeProcessor.Change(
+                    configPath,
+                    AssetFlowConfigurationChangeProcessor.ChangeKind.Edited),
+            });
+
+            var index = new AssetFlowIndexStore().Load();
+            var assetRecord = FindAssetRecord(index, texturePath);
+            Assert.That(count, Is.EqualTo(0));
+            Assert.That(assetRecord.lastProcessedRuleHash, Is.EqualTo(firstRuleHash));
+            Assert.That(index.IsOutOfDate(AssetDatabase.AssetPathToGUID(texturePath), config.ToSnapshot().ConfigGuid, config.ComputeRuleHash()), Is.True);
+        }
+
+        [Test]
         public void ApplyToManagedAssets_SavesAppliedStateForCurrentConfigSnapshot()
         {
             var texturePath = WritePng(TextureFolder + "/applied-state.png");
@@ -364,6 +412,30 @@ namespace AssetFlow.Editor.Tests
             Assert.That(applied.ruleHash, Is.EqualTo(snapshot.RuleHash));
             Assert.That(applied.snapshotJson, Does.Contain("includeSubfolders"));
             Assert.That(AssetDatabase.AssetPathToGUID(texturePath), Is.Not.Empty);
+        }
+
+        [Test]
+        public void ApplyToManagedAssets_SavesDirtyTemplatePresetBeforeRecordingAppliedState()
+        {
+            var texturePath = WritePng(TextureFolder + "/dirty-template-subasset.png");
+            var configPath = AssetFlowConfigFactory.CreateTextureConfig(TextureFolder);
+            var config = AssetDatabase.LoadAssetAtPath<AssetFlowTextureConfig>(configPath);
+            var processor = (ApplyTextureImporterTemplateProcessor)config.PreImportProcessors[0];
+            var templateImporter = (TextureImporter)processor.TemplateImporter;
+            templateImporter.mipmapEnabled = false;
+            processor.TemplatePreset.UpdateProperties(templateImporter);
+            EditorUtility.SetDirty(processor.TemplatePreset);
+            EditorUtility.SetDirty(templateImporter);
+            EditorUtility.SetDirty(config);
+
+            var expectedRuleHash = config.ComputeRuleHash();
+            Assert.That(AssetFlowApplyService.ApplyToManagedAssets(config), Is.EqualTo(1));
+
+            var applied = new AssetFlowAppliedStateStore(AppliedStatePath).Find(config.ToSnapshot().ConfigGuid);
+            var targetImporter = (TextureImporter)AssetImporter.GetAtPath(texturePath);
+            Assert.That(applied, Is.Not.Null);
+            Assert.That(applied.ruleHash, Is.EqualTo(expectedRuleHash));
+            Assert.That(targetImporter.mipmapEnabled, Is.False);
         }
 
         [Test]
@@ -387,16 +459,13 @@ namespace AssetFlow.Editor.Tests
             Assert.That(indexAfterDelete.Assets.Any(record => record.assetGuid == AssetDatabase.AssetPathToGUID(texturePath)), Is.False);
         }
 
-        private static TConfig CreateAndCapture<TConfig>(
+        private static TConfig CreateConfig<TConfig>(
             string folder,
-            string sourceAsset,
             System.Func<string, string> createConfig)
             where TConfig : AssetFlowConfig
         {
             var configPath = createConfig(folder);
-            var config = AssetDatabase.LoadAssetAtPath<TConfig>(configPath);
-            Assert.That(AssetFlowPresetUtility.CaptureFromAsset(config, sourceAsset), Is.True);
-            return config;
+            return AssetDatabase.LoadAssetAtPath<TConfig>(configPath);
         }
 
         private static AssetFlowAssetRecord FindAssetRecord(AssetFlowIndex index, string assetPath)

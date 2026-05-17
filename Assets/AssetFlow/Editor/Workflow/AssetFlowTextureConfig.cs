@@ -11,7 +11,7 @@ namespace AssetFlow.Editor.Workflow
 
         private void OnValidate()
         {
-            EnsureSinglePresetProcessor();
+            EnsureSingleTemplateProcessor();
         }
 
         internal void ResetToDefaultsForTests()
@@ -27,8 +27,8 @@ namespace AssetFlow.Editor.Workflow
         private void ResetToDefaults()
         {
             ResetProcessorLists();
-            AddPreImportProcessor(CreateInstance<ApplyTextureImporterPresetProcessor>());
-            EnsureSinglePresetProcessor();
+            AddPreImportProcessor(CreateInstance<ApplyTextureImporterTemplateProcessor>());
+            EnsureSingleTemplateProcessor();
         }
     }
 }

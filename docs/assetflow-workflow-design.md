@@ -16,7 +16,7 @@ AssetFlow 的目标不是替换 Unity 原生导入管线，而是在 Unity 的�
 
 1. 让同一文件夹下的同类资源遵循一致的导入与处理规则。
 2. 新增或修改资源时自动执行对应工作流。
-3. 配置变更时通过显式 `Apply` 重新处理受管资源。
+3. 配置新增、删除和移动时自动重处理受影响资源；配置内容编辑时通过显式 `Apply` 重新处理受管资源。
 4. 在资源 Inspector 中明确显示资源是否被 AssetFlow 接管，以及由哪个配置接管。
 5. 支持用户扩展导入前处理器、导入后处理器和校验器。
 6. 避免因为资源依赖、文件写入或重复 reimport 导致 Unity 卡死。
@@ -53,7 +53,7 @@ MVP 暂不处理以下内容：
 | PreImportProcessor | 导入前处理器，处理对象是 importer |
 | PostImportProcessor | 导入后处理器，处理对象是导入出的资源 |
 | Validator | 校验器，处理对象是导入出的资源 |
-| Preset | Unity `Preset`，用于保存 importer 设置；在 AssetFlow 中由内置 `PreImportProcessor` 持有并应用 |
+| Template Importer | Unity 模板 importer，用于保存 importer 设置；在 AssetFlow 中由内置 `PreImportProcessor` 持有并应用 |
 | AssetFlowIndex | AssetFlow 的本地缓存索引，保存在 `Library/AssetFlow/Index.json` |
 | RuleHash | 配置当前规则内容的 hash |
 
@@ -120,14 +120,14 @@ public abstract class AssetFlowImporterConfig<TImporter> : AssetFlowConfig
 
 ## 5. Importer 设置
 
-### 5.1 Preset 是一种内置 PreImportProcessor
+### 5.1 Importer Template 是一种内置 PreImportProcessor
 
-Importer 设置使用 Unity `Preset` 表达，不直接引用某个资源的 `AssetImporter` 实例。
+Importer 设置通过同类型 `AssetImporter` 子资源表达。AssetFlow 不直接引用某个普通资源的 importer，也不引用独立 `.preset` 资产；它会把样本 importer 复制为 `AssetFlowConfig` 的子资源，并由内置导入前处理器持有和应用。
 
-在 AssetFlow 中，`Preset` 不是独立阶段，也不是 `AssetFlowImporterConfig` 上的单独字段。它由一个内置的导入前处理器持有和应用：
+在 AssetFlow 中，Importer Template 不是独立阶段，也不是 `AssetFlowImporterConfig` 上的单独字段。它由一个内置的导入前处理器持有和应用：
 
 ```text
-ApplyPresetPreImportProcessor<TImporter>
+ApplyImporterTemplateProcessor<TImporter>
 ```
 
 因此执行模型统一为：
@@ -136,79 +136,64 @@ ApplyPresetPreImportProcessor<TImporter>
 PreImportProcessors 按列表顺序执行
 ```
 
-其中 `ApplyPresetPreImportProcessor` 只是列表中的一个特殊内置处理器。
+其中 `ApplyImporterTemplateProcessor` 只是列表中的一个特殊内置处理器。
 
 原因：
 
-1. `AssetImporter` 绑定具体资源和 `.meta`，不是稳定模板资产。
-2. 模板源资源被移动或删除会导致引用语义混乱。
-3. `Preset` 更适合作为可序列化、可 diff、可版本化的 importer 设置载体。
-4. 把 `Preset` 作为内置 `PreImportProcessor` 可以避免“独立 Preset 阶段 + PreImportProcessor 列表”的双入口模型。
+1. `AssetImporter` 绑定具体资源和 `.meta`，不能直接引用普通资源 importer 作为长期模板。
+2. 复制后的 importer 子资源可以直接使用 Unity 原生 importer inspector 编辑，符合用户熟悉的编辑体验。
+3. 子资源跟随 `AssetFlowConfig` 一起保存、移动和版本化，不会产生额外 `.preset` 资产。
+4. 把模板 importer 作为内置 `PreImportProcessor` 持有的数据，可以避免“独立模板阶段 + PreImportProcessor 列表”的双入口模型。
 
-### 5.2 ApplyPresetPreImportProcessor
+### 5.2 ApplyImporterTemplateProcessor
 
 内置处理器形态：
 
 ```csharp
-public sealed class ApplyPresetPreImportProcessor<TImporter>
+public sealed class ApplyImporterTemplateProcessor<TImporter>
     : AssetFlowPreImportProcessor<TImporter>
     where TImporter : AssetImporter
 {
-    [SerializeField] private Preset preset;
+    [SerializeField] private AssetImporter templateImporter;
 
     public override void Process(
         TImporter importer,
         AssetFlowPreImportContext context)
     {
-        if (preset == null)
+        if (templateImporter == null)
             return;
 
-        if (!preset.CanBeAppliedTo(importer))
+        if (!(templateImporter is TImporter typedTemplateImporter))
         {
-            context.ReportError("Preset cannot be applied to importer.");
+            context.ReportError("Template importer is incompatible with target importer.");
             return;
         }
 
-        preset.ApplyTo(importer);
+        EditorUtility.CopySerialized(typedTemplateImporter, importer);
     }
 }
 ```
 
 规则：
 
-1. 一个配置中最多存在一个 `ApplyPresetPreImportProcessor`。
-2. 新建 importer 版本配置时默认带一个 `ApplyPresetPreImportProcessor`。
+1. 一个配置中最多存在一个 `ApplyImporterTemplateProcessor`。
+2. 新建 importer 版本配置时默认带一个 `ApplyImporterTemplateProcessor`。
 3. 默认顺序放在 `PreImportProcessors` 列表第一位。
 4. 用户可以调整它在导入前处理器列表中的顺序。
-5. 用户可以删除它；删除后表示该 workflow 不通过 `Preset` 设置 importer，只运行其他导入前处理器。
-6. Inspector 可以把它特殊展示为 `Importer Preset`，但底层仍是处理器。
+5. 用户可以删除它；删除后表示该 workflow 不通过模板 importer 设置 importer，只运行其他导入前处理器。
+6. Inspector 将它特殊展示为 `Template Importer`，底层仍是处理器。
 
-### 5.3 Preset 保存方式
+### 5.3 Template Importer 保存方式
 
-`Preset` 作为 `ApplyPresetPreImportProcessor` 的子资源或其持有的子资源保存，并随 AssetFlow 配置一起存放：
+模板 importer 必须作为 `AssetFlowConfig` 资产的子资源保存，并随 AssetFlow 配置一起存放；处理器只保存对该子资源的引用：
 
 ```text
 Assets/UI/AssetFlow.Texture.asset
-  sub-asset: ApplyPresetPreImportProcessor
-  sub-asset: TextureImporterPreset
+  sub-asset: ApplyImporterTemplateProcessor
+  sub-asset: TextureImporter
 ```
 
-配置 Inspector 提供操作：
-
-```text
-[Capture From Selected Asset]
-[Edit Preset]
-[Clear Preset]
-```
-
-`Capture From Selected Asset` 的语义：
-
-1. 用户选择一个资源作为样本。
-2. AssetFlow 获取该资源的 importer。
-3. 找到或创建内置 `ApplyPresetPreImportProcessor`。
-4. 用该 importer 创建或更新处理器持有的子资源 `Preset`。
-5. 后续受管资源在执行该处理器时应用 importer 设置。
-
+配置创建或 Inspector 绘制时自动保证模板 importer 子资源存在。若配置所在文件夹已有同类型资源，AssetFlow 使用第一个同类型资源的 importer 复制出默认模板；否则在配置所在文件夹短暂创建同类型模板源资源，复制 importer 后立即删除该模板源。之后用户直接在配置 Inspector 中编辑这个模板 importer。配置 UI 不提供 Capture、Clear 或 Ping 按钮，避免把内部模板维护暴露为用户流程。
 ## 6. 类型系统
 
 MVP 只支持 importer 版本：
@@ -287,7 +272,7 @@ Assets/UI/
 冲突规则：
 
 1. 冲突配置完全失效。
-2. 不执行内置 `ApplyPresetPreImportProcessor`，因此不会应用 `Preset`。
+2. 不执行内置 `ApplyImporterTemplateProcessor`，因此不会应用 模板 importer。
 3. 不执行 `PreImportProcessor`。
 4. 不执行 `PostImportProcessor`。
 5. 不执行 `Validator`。
@@ -355,9 +340,9 @@ public abstract class AssetFlowPreImportProcessor<TImporter> : AssetFlowPreImpor
 约定：
 
 1. `PreImportProcessor` 按配置列表顺序执行。
-2. `ApplyPresetPreImportProcessor` 是一种内置 `PreImportProcessor`，默认位于列表第一位。
-3. 其他 `PreImportProcessor` 可以覆盖 `ApplyPresetPreImportProcessor` 应用的设置。
-4. 用户可以调整 `ApplyPresetPreImportProcessor` 的顺序，也可以删除它。
+2. `ApplyImporterTemplateProcessor` 是一种内置 `PreImportProcessor`，默认位于列表第一位。
+3. 其他 `PreImportProcessor` 可以覆盖 `ApplyImporterTemplateProcessor` 应用的设置。
+4. 用户可以调整 `ApplyImporterTemplateProcessor` 的顺序，也可以删除它。
 5. 不建议在导入回调中直接写当前源文件。
 
 ### 8.2 PostImportProcessor
@@ -410,7 +395,7 @@ public abstract class AssetFlowValidator<TAsset> : AssetFlowValidator
 
 ### 8.4 异常处理
 
-如果某个 handler 执行失败，包括内置 `ApplyPresetPreImportProcessor`：
+如果某个 handler 执行失败，包括内置 `ApplyImporterTemplateProcessor`：
 
 1. 捕获异常。
 2. 记录 error。
@@ -420,7 +405,7 @@ public abstract class AssetFlowValidator<TAsset> : AssetFlowValidator
 
 ## 9. Apply 语义
 
-配置变更后不自动批量处理旧资源，而是显式点击：
+配置内容编辑后不自动批量处理旧资源，而是显式点击：
 
 ```text
 Apply To Managed Assets
@@ -443,7 +428,7 @@ Apply To Managed Assets
 
 ### 9.1 配置未 Apply 时的行为
 
-如果用户修改配置但没有点击 `Apply`：
+如果用户修改配置内容但没有点击 `Apply`：
 
 1. 旧资源不会自动批量重处理。
 2. 新增或被用户修改的资源仍会自动导入，并使用当前配置内容。
@@ -520,7 +505,7 @@ managed && assetRecord.lastProcessedRuleHash != config.currentRuleHash
 1. 配置资源的序列化内容。
 2. `includeSubfolders`。
 3. `PreImportProcessor` 类型、`Version` 和序列化设置。
-4. 内置 `ApplyPresetPreImportProcessor` 持有的 importer `Preset` 内容。
+4. 内置 `ApplyImporterTemplateProcessor` 持有的 模板 importer 内容。
 5. `PostImportProcessor` 类型、`Version` 和序列化设置。
 6. `Validator` 类型、`Version` 和序列化设置。
 
@@ -560,7 +545,7 @@ context.DependsOnCustomDependency(
 custom dependency 适合处理：
 
 1. 已接管资源对应配置内容变化。
-2. 内置 `ApplyPresetPreImportProcessor` 持有的 `Preset` 变化。
+2. 内置 `ApplyImporterTemplateProcessor` 持有的模板 importer 变化。
 3. handler 参数变化。
 4. handler `Version` 变化。
 
@@ -675,7 +660,7 @@ AssetFlowIndex 用于：
 7. 是否有暂停的 handler。
 8. 最近校验结果。
 
-## 14. 文件变化时的自动处理
+## 14. 文件和配置变化时的自动处理
 
 普通资源变化时自动进入 AssetFlow。
 
@@ -697,7 +682,7 @@ Unity detects asset change
 → Update Index
 ```
 
-配置变化时不自动批量处理旧资源，只更新状态并提示用户 `Apply`。
+配置新增、删除和移动时通过重处理队列自动重导入受影响资源。配置内容编辑时不自动批量处理旧资源，只更新状态并提示用户 `Apply`。
 
 ## 15. 配置删除与脱管
 
@@ -791,7 +776,7 @@ AssetFlowApplyQueue
 AssetFlowLoopGuard
 AssetFlowInspectorOverlay
 AssetFlowConfigEditor
-AssetFlowPresetUtility
+AssetFlowTemplateImporterUtility
 ```
 
 模块职责：
@@ -800,11 +785,11 @@ AssetFlowPresetUtility
 |---|---|
 | AssetFlowResolver | 根据路径和 importer 类型解析接管配置 |
 | AssetFlowIndex | 保存配置记录、资源记录、校验结果 |
-| AssetFlowApplyQueue | 执行显式 Apply 和批量重导入 |
+| AssetFlowReprocessQueue | 执行配置新增、删除和移动引起的批量重导入 |
 | AssetFlowLoopGuard | 检测并暂停可能死循环的 handler |
 | AssetFlowInspectorOverlay | 在资源 Inspector 显示接管状态 |
 | AssetFlowConfigEditor | 编辑配置、显示 out-of-date、提供 Apply 按钮 |
-| AssetFlowPresetUtility | 捕获和更新 `ApplyPresetPreImportProcessor` 持有的 importer Preset |
+| AssetFlowTemplateImporterUtility | 自动创建和维护 `ApplyImporterTemplateProcessor` 持有的 模板 importer |
 
 ## 19. MVP 产品形态总结
 
@@ -815,10 +800,10 @@ MVP 最终形态：
 3. 每个配置只对应一种 importer 类型。
 4. 配置通过文件夹右键创建。
 5. 配置默认只管理当前文件夹，不递归。
-6. importer 设置使用 Unity `Preset`，但通过内置 `ApplyPresetPreImportProcessor` 应用，并作为配置相关子资源保存。
+6. importer 设置使用 Unity 模板 importer，但通过内置 `ApplyImporterTemplateProcessor` 应用，并作为配置相关子资源保存。
 7. 工作流分为导入前处理、导入后处理、校验三个阶段。
 8. 导入后处理和校验通过 `LoadAllAssetsAtPath` 获取 main asset 与 sub assets，并按 `TAsset` 类型过滤。
-9. 配置变更后通过显式 `Apply To Managed Assets` 完整重导入受管资源。
+9. 配置新增、删除和移动后自动重导入受影响资源；配置内容编辑后通过显式 `Apply To Managed Assets` 完整重导入受管资源。
 10. 接管状态和处理结果保存在 `Library/AssetFlow/Index.json`，不写 `.meta`。
 11. 同 folder/type 多配置冲突时，冲突配置完全失效，但仍阻断父配置。
 12. 死循环检测只暂停触发循环的 handler，不暂停整个资源工作流。

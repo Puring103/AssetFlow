@@ -18,7 +18,7 @@ namespace AssetFlow.Editor.Importing
         private void OnPreprocessAsset()
         {
             var importer = assetImporter;
-            if (importer == null || IsAssetFlowAsset(assetPath))
+            if (importer == null || ShouldSkipManagedAssetPath(assetPath))
                 return;
 
             var result = Resolve(assetPath, importer.GetType().FullName);
@@ -49,8 +49,15 @@ namespace AssetFlow.Editor.Importing
             string[] movedAssets,
             string[] movedFromAssetPaths)
         {
-            if (ContainsConfigChange(importedAssets, deletedAssets, movedAssets, movedFromAssetPaths))
-                AssetFlowConfigurationChangeProcessor.ProcessConfigurationChanges();
+            if (TryCollectConfigChanges(
+                    importedAssets,
+                    deletedAssets,
+                    movedAssets,
+                    movedFromAssetPaths,
+                    out var configChanges))
+            {
+                AssetFlowConfigurationChangeProcessor.ProcessConfigurationChanges(configChanges);
+            }
 
             var indexStore = new AssetFlowIndexStore();
             var index = indexStore.Load();
@@ -59,7 +66,7 @@ namespace AssetFlow.Editor.Importing
 
             foreach (var assetPath in (importedAssets ?? Array.Empty<string>()).Concat(movedAssets ?? Array.Empty<string>()))
             {
-                if (IsAssetFlowAsset(assetPath))
+                if (ShouldSkipManagedAssetPath(assetPath))
                     continue;
 
                 var importer = AssetImporter.GetAtPath(assetPath);
@@ -110,7 +117,7 @@ namespace AssetFlow.Editor.Importing
         {
             foreach (var path in (deletedAssets ?? Array.Empty<string>()).Concat(movedFromAssetPaths ?? Array.Empty<string>()))
             {
-                if (IsAssetFlowAsset(path))
+                if (ShouldSkipManagedAssetPath(path))
                     continue;
 
                 ForgetPreImportReport(path);
@@ -172,6 +179,11 @@ namespace AssetFlow.Editor.Importing
             AssetFlowPipelineReport report)
         {
             var assetGuid = AssetDatabase.AssetPathToGUID(assetPath);
+            var existingRecord = index.Assets.FirstOrDefault(asset =>
+                string.Equals(asset.assetGuid, assetGuid, StringComparison.OrdinalIgnoreCase));
+            var processedRuleHash = report != null && report.HasErrors
+                ? existingRecord?.lastProcessedRuleHash ?? string.Empty
+                : config.RuleHash;
             index.UpsertConfig(new AssetFlowConfigRecord
             {
                 configGuid = config.ConfigGuid,
@@ -188,13 +200,13 @@ namespace AssetFlow.Editor.Importing
                 importerTypeKey = importer.GetType().FullName,
                 managedByConfigGuid = config.ConfigGuid,
                 managedByConfigPath = config.ConfigPath,
-                lastProcessedRuleHash = config.RuleHash,
+                lastProcessedRuleHash = processedRuleHash,
                 lastProcessedTicks = DateTime.UtcNow.Ticks,
             });
             index.ReplaceValidationResults(
                 assetGuid,
                 config.ConfigGuid,
-                report.Issues.Select(issue => new AssetFlowValidationRecord
+                (report?.Issues ?? Array.Empty<AssetFlowIssue>()).Select(issue => new AssetFlowValidationRecord
                 {
                     assetGuid = assetGuid,
                     configGuid = config.ConfigGuid,
@@ -212,26 +224,69 @@ namespace AssetFlow.Editor.Importing
             context.DependsOnCustomDependency(AssetFlowDependency.CustomDependencyName(config.ConfigGuid));
         }
 
-        private static bool IsAssetFlowAsset(string path)
+        private static bool ShouldSkipManagedAssetPath(string path)
         {
-            return path != null && path.IndexOf("/AssetFlow.", StringComparison.OrdinalIgnoreCase) >= 0;
+            return AssetFlowConfigurationChangeProcessor.IsConfigPath(path)
+                   || AssetFlowTemplateImporterUtility.IsTemplateSourceAsset(path);
         }
 
-        private static bool ContainsConfigChange(params string[][] pathGroups)
+        private static bool TryCollectConfigChanges(
+            string[] importedAssets,
+            string[] deletedAssets,
+            string[] movedAssets,
+            string[] movedFromAssetPaths,
+            out List<AssetFlowConfigurationChangeProcessor.Change> changes)
         {
-            foreach (var paths in pathGroups)
+            changes = new List<AssetFlowConfigurationChangeProcessor.Change>();
+            var index = new AssetFlowIndexStore().Load();
+
+            AddImportedConfigChanges(changes, importedAssets, index);
+            AddConfigChanges(changes, deletedAssets, AssetFlowConfigurationChangeProcessor.ChangeKind.Removed, index);
+            AddConfigChanges(changes, movedAssets, AssetFlowConfigurationChangeProcessor.ChangeKind.Moved, index);
+            AddConfigChanges(changes, movedFromAssetPaths, AssetFlowConfigurationChangeProcessor.ChangeKind.Moved, index);
+
+            return changes.Count > 0;
+        }
+
+        private static void AddImportedConfigChanges(
+            List<AssetFlowConfigurationChangeProcessor.Change> changes,
+            IEnumerable<string> paths,
+            AssetFlowIndex index)
+        {
+            if (paths == null)
+                return;
+
+            foreach (var path in paths)
             {
-                if (paths == null)
+                if (!AssetFlowConfigurationChangeProcessor.IsConfigPath(path))
                     continue;
 
-                foreach (var path in paths)
-                {
-                    if (AssetFlowConfigurationChangeProcessor.IsConfigPath(path))
-                        return true;
-                }
+                var kind = AssetFlowConfigurationChangeProcessor.IsKnownConfigPath(path, index)
+                    ? AssetFlowConfigurationChangeProcessor.ChangeKind.Edited
+                    : AssetFlowConfigurationChangeProcessor.ChangeKind.Added;
+                changes.Add(new AssetFlowConfigurationChangeProcessor.Change(path, kind));
             }
+        }
 
-            return false;
+        private static void AddConfigChanges(
+            List<AssetFlowConfigurationChangeProcessor.Change> changes,
+            IEnumerable<string> paths,
+            AssetFlowConfigurationChangeProcessor.ChangeKind kind,
+            AssetFlowIndex index)
+        {
+            if (paths == null)
+                return;
+
+            foreach (var path in paths)
+            {
+                if (!AssetFlowConfigurationChangeProcessor.IsConfigPath(path)
+                    && !AssetFlowConfigurationChangeProcessor.IsKnownConfigPath(path, index))
+                {
+                    continue;
+                }
+
+                changes.Add(new AssetFlowConfigurationChangeProcessor.Change(path, kind));
+            }
         }
     }
 }

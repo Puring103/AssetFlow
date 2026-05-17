@@ -54,7 +54,7 @@ namespace AssetFlow.Editor.Workflow
             }
         }
 
-        public void EnsureSinglePresetProcessor()
+        public void EnsureSingleTemplateProcessor()
         {
             var seen = false;
             for (var i = 0; i < preImportProcessors.Count; i++)
@@ -95,6 +95,12 @@ namespace AssetFlow.Editor.Workflow
                 return;
 
             RemoveHandlerReference(handler);
+            if (handler is IAssetFlowImporterTemplateProcessor templateProcessor)
+            {
+                RemoveSubAsset(templateProcessor.TemplatePreset);
+                RemoveSubAsset(templateProcessor.TemplateImporter);
+            }
+
             RemoveSubAsset(handler);
             EditorUtility.SetDirty(this);
         }
