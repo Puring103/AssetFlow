@@ -415,7 +415,7 @@ namespace AssetFlow.Editor.Tests
         }
 
         [Test]
-        public void ApplyToManagedAssets_SavesDirtyTemplatePresetBeforeRecordingAppliedState()
+        public void ApplyToManagedAssets_SavesDirtyTemplateImporterBeforeRecordingAppliedState()
         {
             var texturePath = WritePng(TextureFolder + "/dirty-template-subasset.png");
             var configPath = AssetFlowConfigFactory.CreateTextureConfig(TextureFolder);
@@ -423,8 +423,6 @@ namespace AssetFlow.Editor.Tests
             var processor = (ApplyTextureImporterTemplateProcessor)config.PreImportProcessors[0];
             var templateImporter = (TextureImporter)processor.TemplateImporter;
             templateImporter.mipmapEnabled = false;
-            processor.TemplatePreset.UpdateProperties(templateImporter);
-            EditorUtility.SetDirty(processor.TemplatePreset);
             EditorUtility.SetDirty(templateImporter);
             EditorUtility.SetDirty(config);
 

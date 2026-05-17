@@ -36,13 +36,7 @@ namespace AssetFlow.Editor.Workflow
 
         public AssetImporter TemplateImporter
         {
-            get
-            {
-                if (templateImporter != null)
-                    return templateImporter;
-
-                return AssetFlow.Editor.Importing.AssetFlowTemplateImporterStore.GetPreviewImporter(this);
-            }
+            get => templateImporter;
         }
 
         public Preset LegacyPreset => preset;
@@ -88,17 +82,18 @@ namespace AssetFlow.Editor.Workflow
 
         public override void Process(TImporter importer, AssetFlowPreImportContext context)
         {
-            if (templatePreset != null)
+            if (templateImporter == null)
             {
-                if (templatePreset.CanBeAppliedTo(importer))
-                    templatePreset.ApplyTo(importer);
-                else
-                    context.ReportError("Template importer is incompatible with target importer.");
+                if (templatePreset != null)
+                {
+                    if (templatePreset.CanBeAppliedTo(importer))
+                        templatePreset.ApplyTo(importer);
+                    else
+                        context.ReportError("Template importer is incompatible with target importer.");
+                }
+
                 return;
             }
-
-            if (templateImporter == null)
-                return;
 
             if (!(templateImporter is TImporter typedTemplateImporter))
             {

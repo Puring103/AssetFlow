@@ -5,7 +5,6 @@ using AssetFlow.Editor.Core;
 using AssetFlow.Editor.Importing;
 using AssetFlow.Editor.Workflow;
 using UnityEditor;
-using UnityEditor.Presets;
 using UnityEngine;
 
 namespace AssetFlow.Editor.UI
@@ -307,12 +306,7 @@ namespace AssetFlow.Editor.UI
             if (!EditorGUI.EndChangeCheck())
                 return false;
 
-            if (processor.TemplatePreset != null)
-                processor.TemplatePreset.UpdateProperties(templateImporter);
-
             EditorUtility.SetDirty(templateImporter);
-            if (processor.TemplatePreset != null)
-                EditorUtility.SetDirty(processor.TemplatePreset);
             EditorUtility.SetDirty((UnityEngine.Object)processor);
             EditorUtility.SetDirty(config);
             return true;

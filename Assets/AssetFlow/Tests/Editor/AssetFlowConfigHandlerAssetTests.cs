@@ -57,12 +57,12 @@ namespace AssetFlow.Editor.Tests
         }
 
         [Test]
-        public void RemoveTemplateProcessor_RemovesProcessorAndTemplatePresetSubAssets()
+        public void RemoveTemplateProcessor_RemovesProcessorAndTemplateImporterSubAssets()
         {
             var configPath = AssetFlowConfigFactory.CreateTextureConfig(TestFolder);
             var config = AssetDatabase.LoadAssetAtPath<AssetFlowTextureConfig>(configPath);
             var processor = (ApplyTextureImporterTemplateProcessor)config.PreImportProcessors[0];
-            var templatePreset = processor.TemplatePreset;
+            var templateImporter = processor.TemplateImporter;
 
             config.RemoveHandlerAndSubAsset(processor);
             AssetDatabase.SaveAssets();
@@ -70,7 +70,7 @@ namespace AssetFlow.Editor.Tests
 
             Assert.That(config.PreImportProcessors, Has.None.SameAs(processor));
             Assert.That(AssetDatabase.LoadAllAssetsAtPath(configPath), Has.None.SameAs(processor));
-            Assert.That(AssetDatabase.LoadAllAssetsAtPath(configPath), Has.None.SameAs(templatePreset));
+            Assert.That(AssetDatabase.LoadAllAssetsAtPath(configPath), Has.None.SameAs(templateImporter));
         }
     }
 
